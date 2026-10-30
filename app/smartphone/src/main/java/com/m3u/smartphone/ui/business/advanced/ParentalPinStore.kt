@@ -21,6 +21,13 @@ class ParentalPinStore(context: Context) {
 
     fun hasPin(): Boolean = !preferences.getString(KEY_HASH, null).isNullOrBlank()
 
+    fun playbackLockEnabled(): Boolean =
+        hasPin() && preferences.getBoolean(KEY_PLAYBACK_LOCK, false)
+
+    fun setPlaybackLockEnabled(enabled: Boolean) {
+        preferences.edit().putBoolean(KEY_PLAYBACK_LOCK, enabled && hasPin()).apply()
+    }
+
     fun setPin(pin: String): Boolean {
         if (pin.length !in 4..8 || pin.any { !it.isDigit() }) return false
         val salt = ByteArray(SALT_BYTES).also(SecureRandom()::nextBytes)
@@ -93,6 +100,7 @@ class ParentalPinStore(context: Context) {
         const val KEY_SALT = "pin_salt"
         const val KEY_HASH = "pin_hash"
         const val KEY_LOCKED_CATEGORIES = "locked_categories"
+        const val KEY_PLAYBACK_LOCK = "playback_lock_enabled"
         const val KEY_FAILED_ATTEMPTS = "failed_pin_attempts"
         const val KEY_LOCKOUT_UNTIL = "pin_lockout_until"
         const val SALT_BYTES = 16
