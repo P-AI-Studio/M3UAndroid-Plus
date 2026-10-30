@@ -71,6 +71,10 @@ class AdvancedToolsViewModel @Inject constructor(
     data class BatchState(
         val total: Int = 0,
         val completed: Int = 0,
+        val online: Int = 0,
+        val offline: Int = 0,
+        val restricted: Int = 0,
+        val inconclusive: Int = 0,
         val running: Boolean = false,
         val results: List<BatchItem> = emptyList(),
         val message: String? = null
@@ -206,6 +210,10 @@ class AdvancedToolsViewModel @Inject constructor(
                                     _batchState.update { state ->
                                         state.copy(
                                             completed = state.completed + 1,
+                                            online = state.online + if (result.outcome == StreamProbeOutcome.ONLINE) 1 else 0,
+                                            offline = state.offline + if (result.outcome == StreamProbeOutcome.OFFLINE) 1 else 0,
+                                            restricted = state.restricted + if (result.outcome == StreamProbeOutcome.RESTRICTED) 1 else 0,
+                                            inconclusive = state.inconclusive + if (result.outcome == StreamProbeOutcome.INCONCLUSIVE) 1 else 0,
                                             results = state.results + BatchItem(
                                                 channelId = channel.id,
                                                 title = channel.title,
@@ -241,6 +249,15 @@ class AdvancedToolsViewModel @Inject constructor(
                     )
                 }
             }
+        }
+    }
+
+    fun categoriesForPlaylist(playlistUrl: String): Flow<List<String>> =
+        playlistRepository.observeCategoriesByPlaylistUrlIgnoreHidden(playlistUrl, "")
+
+    fun setPinnedCategories(playlistUrl: String, categories: List<String>) {
+        viewModelScope.launch {
+            playlistRepository.reorderPinnedCategories(playlistUrl, categories.distinct())
         }
     }
 
