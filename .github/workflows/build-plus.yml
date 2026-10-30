@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: m3uandroid-plus-${{ github.ref }}
+  group: m3uandroid-plus-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 permissions:
@@ -27,7 +27,7 @@ env:
 jobs:
   build-arm64:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 20
     steps:
       - name: Checkout source and submodules
         uses: actions/checkout@v4
@@ -101,11 +101,11 @@ jobs:
 
       - name: Build ARM64 release APK
         if: steps.signing.outputs.build_kind == 'Release'
-        run: ./gradlew --no-daemon --stacktrace -Pm3uArm64=true :app:smartphone:assembleRelease
+        run: ./gradlew --no-daemon --stacktrace --console=plain -Pm3uArm64=true :app:smartphone:assembleRelease
 
       - name: Build ARM64 preview APK
         if: steps.signing.outputs.build_kind == 'Preview'
-        run: ./gradlew --no-daemon --stacktrace -Pm3uArm64=true :app:smartphone:assembleDebug
+        run: ./gradlew --no-daemon --stacktrace --console=plain -Pm3uArm64=true :app:smartphone:assembleDebug
 
       - name: Verify independent package, ARM64 ABI and APK signature
         env:
