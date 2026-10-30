@@ -1,0 +1,52 @@
+name: Export Android APK signing tools
+
+on:
+  push:
+    branches: [ plus-implementation ]
+    paths:
+      - 'APKSIGNER_TOOLS_TRIGGER'
+
+permissions:
+  contents: read
+
+jobs:
+  export-tools:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android Build Tools 37.0.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --channel=1 "build-tools;37.0.0"
+          test -x "$ANDROID_HOME/build-tools/37.0.0/apksigner"
+
+      - name: Package signing tools for the private signing handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          tar -czf dist/android-build-tools-37.0.0-linux-x64.tar.gz \
+            -C "$ANDROID_HOME/build-tools" 37.0.0
+          sha256sum dist/android-build-tools-37.0.0-linux-x64.tar.gz > dist/SHA256SUMS.txt
+
+      - name: Upload Android signing tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: M3UAndroid-Plus-ApkSignerTools-37.0.0
+          path: |
+            dist/android-build-tools-37.0.0-linux-x64.tar.gz
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
