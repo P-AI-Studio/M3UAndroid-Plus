@@ -481,7 +481,7 @@ internal sealed class MainForm : Form
                     default: Interlocked.Increment(ref inconclusive); break;
                 }
                 Interlocked.Increment(ref done);
-                reporter.Report(channel);
+                ((IProgress<ChannelItem>)reporter).Report(channel);
             });
 
             if (Equals(Tag, runId))
