@@ -1,0 +1,48 @@
+name: M3UAndroid Plus — Windows x64
+
+on:
+  push:
+    branches: [ plus-implementation ]
+    paths:
+      - 'desktop/windows/**'
+      - '.github/workflows/build-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish-windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish self-contained Windows x64
+        shell: pwsh
+        run: |
+          dotnet restore desktop/windows/M3UAndroidPlus.Windows.csproj -r win-x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet publish desktop/windows/M3UAndroidPlus.Windows.csproj -c Release -r win-x64 --self-contained true -o desktop/windows/publish
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Test-Path "desktop/windows/publish/M3UAndroidPlus.Windows.exe")) {
+            throw "Windows executable was not produced."
+          }
+          $zip = "$env:RUNNER_TEMP/M3UAndroidPlus-Windows-x64.zip"
+          Compress-Archive -Path "desktop/windows/publish/*" -DestinationPath $zip -Force
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  M3UAndroidPlus-Windows-x64.zip" | Out-File "desktop/windows/publish/SHA256SUMS.txt" -Encoding ascii
+
+      - name: Upload Windows x64 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: M3UAndroid-Plus-Windows-x64
+          path: desktop/windows/publish/**
+          if-no-files-found: error
+          retention-days: 30
