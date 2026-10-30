@@ -70,15 +70,6 @@ object StreamDiagnostics {
             }
 
             val text = sample.bodyText().trimStart('\uFEFF', ' ', '\r', '\n')
-            if (looksLikeTextError(sample.contentType, sample.body)) {
-                return StreamDiagnosticResult(
-                    endpoint, sample.statusCode, elapsedMs(started), sample.contentType,
-                    sample.contentLength, sample.rangeSupported, true, sample.redirected,
-                    "The URL returned a web or text error page rather than a playlist.",
-                    StreamProbeOutcome.INCONCLUSIVE, false, finalEndpoint
-                )
-            }
-
             val isHls = text.startsWith("#EXTM3U", ignoreCase = true) && (
                 text.contains("#EXT-X-STREAM-INF", ignoreCase = true) ||
                     text.contains("#EXT-X-TARGETDURATION", ignoreCase = true) ||
@@ -86,7 +77,12 @@ object StreamDiagnostics {
                     text.contains("#EXT-X-PLAYLIST-TYPE", ignoreCase = true) ||
                     text.contains("#EXT-X-ENDLIST", ignoreCase = true)
                 )
-            if (text.startsWith("#EXTM3U", ignoreCase = true) && !isHls) {
+            val isRegularM3u = !isHls && (
+                text.startsWith("#EXTM3U", ignoreCase = true) ||
+                    text.contains("#EXTINF", ignoreCase = true)
+                )
+            if (isRegularM3u) {
+                // text/plain is a normal content type for many M3U providers, not an error page.
                 val entryCount = text.lineSequence().map(String::trim).count { line ->
                     if (line.isBlank() || line.startsWith("#")) false
                     else runCatching {
@@ -99,8 +95,17 @@ object StreamDiagnostics {
                     endpoint, sample.statusCode, elapsedMs(started), sample.contentType,
                     sample.contentLength, sample.rangeSupported, true, sample.redirected,
                     if (entryCount > 0) "Playlist source loaded; found $entryCount HTTP stream entries in the response sample."
-                    else "M3U header was present, but no HTTP stream entries were found in the response sample.",
+                    else "M3U structure was present, but no HTTP stream entries were found in the response sample.",
                     outcome, false, finalEndpoint
+                )
+            }
+
+            if (looksLikeTextError(sample.contentType, sample.body)) {
+                return StreamDiagnosticResult(
+                    endpoint, sample.statusCode, elapsedMs(started), sample.contentType,
+                    sample.contentLength, sample.rangeSupported, true, sample.redirected,
+                    "The URL returned a web or text error page rather than media.",
+                    StreamProbeOutcome.INCONCLUSIVE, false, finalEndpoint
                 )
             }
 
