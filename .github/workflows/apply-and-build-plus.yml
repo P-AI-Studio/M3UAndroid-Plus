@@ -4,19 +4,17 @@ on:
   push:
     branches: [ plus-implementation ]
     paths:
-      - '.github/workflows/apply-and-build-plus.yml'
-      - 'm3u-plus-patch.tar.xz.b64'
+      - 'RUN_PLUS_PATCH'
 
 permissions:
   contents: write
 
 concurrency:
-  group: m3u-plus-patch-\${{ github.ref }}
+  group: m3u-plus-patch-bootstrap
   cancel-in-progress: false
 
 jobs:
   apply-patch:
-    if: \${{ !contains(github.event.head_commit.message, 'Apply M3UAndroid Plus feature set') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout implementation branch
@@ -25,26 +23,25 @@ jobs:
           ref: plus-implementation
           fetch-depth: 0
 
-      - name: Extract authored Plus patch
+      - name: Verify patch marker and extract the complete archive
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! -f m3u-plus-patch.tar.xz.b64 ]]; then
-            echo 'Patch payload has already been consumed.'
-            exit 0
-          fi
-          base64 --decode m3u-plus-patch.tar.xz.b64 | tar -xJf -
+          test -f RUN_PLUS_PATCH
+          cat m3u-plus-patch.part* > "$RUNNER_TEMP/plus-patch.tar.xz.b64"
+          base64 --decode "$RUNNER_TEMP/plus-patch.tar.xz.b64" | tar -xJf -
 
-      - name: Apply changes and run patch tests
+      - name: Apply only the authored Plus changes and run tests
+        shell: bash
         run: |
           set -euo pipefail
           python3 -m py_compile m3u_enhancement_pack/apply.py
           python3 m3u_enhancement_pack/apply.py --source .
           python3 -m unittest discover -s m3u_enhancement_pack/tests -v
           rm -rf .m3u-plus-patch-backup
-          rm -f m3u-plus-patch.tar.xz.b64
+          rm -f m3u-plus-patch.tar.xz.b64 m3u-plus-patch.part*
 
-      - name: Commit only the applied Plus source changes
+      - name: Commit Plus integration without touching other branches
         shell: bash
         run: |
           set -euo pipefail
