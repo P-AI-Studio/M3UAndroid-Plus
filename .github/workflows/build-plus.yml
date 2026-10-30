@@ -167,7 +167,7 @@ jobs:
                   dest = pathlib.Path(tmp) / pathlib.Path(name).name
                   dest.write_bytes(z.read(name))
                   output = subprocess.check_output([str(tool), "-p", str(dest)], text=True)
-                  loads = [int(x) for x in re.findall(r"LOAD\\s+.*?align\\s+2\\*\\*(\\d+)", output)]
+                  loads = [int(x) for x in re.findall(r"LOAD\s+.*?align\s+2\*\*(\d+)", output)]
                   if not loads or min(loads) < 14:
                       bad.append((name, loads))
           if bad:
