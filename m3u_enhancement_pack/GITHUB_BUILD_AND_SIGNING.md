@@ -15,8 +15,8 @@ The distinct package ID allows the Plus app to be installed beside the original 
 
 ## Build modes
 
-- **ReleasePreview:** if upload-key secrets are not present, GitHub Actions builds a Release-optimized ARM64 APK using the local debug signing fallback. It is for device testing only. The workflow intentionally does **not** upload a debug-signed AAB.
-- **Release:** when all four secrets below are configured, GitHub Actions builds the optimized APK and a signed Android App Bundle (AAB). The AAB is verified before it is included in the artifact and is the Play Console upload candidate.
+- **ReleasePreview:** if upload-key secrets are not present, GitHub Actions builds a Release-optimized ARM64 APK and AAB with the temporary debug fallback. The APK is for device testing; the AAB is only an intermediate artifact and must be re-signed with the private Plus upload key before it is submitted to Play Console.
+- **Release:** when all four secrets below are configured, GitHub Actions builds the optimized APK and AAB with the Plus upload key. Both are verified before they are included in the artifact.
 
 ## Configure the upload key
 
@@ -30,6 +30,8 @@ In GitHub, open **Settings → Secrets and variables → Actions** and add:
 Do not commit the keystore, Base64 data, or passwords to this Public repository. Keep a separate secure backup of the original keystore. Losing the upload key can complicate or prevent future updates.
 
 The key must match the upload certificate registered for this package in Play Console. If this Plus package was already created in Play Console with a different upload certificate, use Google's upload-key reset process rather than uploading an AAB signed with an unrelated key.
+
+When GitHub Actions runs in `ReleasePreview` mode, the downloaded AAB is not ready for Play Console until its temporary debug signature is removed and it is re-signed with this private key. The APK should likewise be signed with the stable Plus key before installing it over a previously released Plus build.
 
 ## Play Console notes
 
