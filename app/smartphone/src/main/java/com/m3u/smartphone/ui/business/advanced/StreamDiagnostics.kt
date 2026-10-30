@@ -91,23 +91,14 @@ object StreamDiagnostics {
             }
 
             if (isHls) {
-                val firstReference = findHlsMediaReference(initial.bodyText())
-                    ?: return StreamDiagnosticResult(
-                        endpoint, initial.statusCode, elapsed, contentType, initial.contentLength,
-                        initial.rangeSupported, true, initial.redirected,
-                        "The HLS manifest is reachable, but no media segment was found in its first bounded read.",
-                        StreamProbeOutcome.INCONCLUSIVE, false, finalEndpoint
-                    )
-                val segmentUrl = URL(initial.finalUrl, firstReference)
-                val segment = request(segmentUrl, parsedInput.userAgent, parsedInput.referer, MAX_SEGMENT_BYTES)
-                val segmentReadable = segment.statusCode in 200..299 && segment.body.isNotEmpty()
-                val outcome = when {
-                    segmentReadable -> StreamProbeOutcome.ONLINE
-                    segment.statusCode in 401..403 || segment.statusCode == 429 -> StreamProbeOutcome.RESTRICTED
-                    segment.statusCode == 404 || segment.statusCode == 410 || segment.statusCode in 500..599 ->
-                        StreamProbeOutcome.OFFLINE
-                    else -> StreamProbeOutcome.INCONCLUSIVE
-                }
+                val segment = probeHlsMedia(
+                    manifestUrl = initial.finalUrl,
+                    manifest = initial.bodyText(),
+                    userAgent = parsedInput.userAgent,
+                    referer = parsedInput.referer,
+                    depth = 0
+                )
+                val segmentReadable = segment.outcome == StreamProbeOutcome.ONLINE
                 return StreamDiagnosticResult(
                     endpoint = endpoint,
                     statusCode = initial.statusCode,
@@ -117,9 +108,8 @@ object StreamDiagnostics {
                     rangeSupported = initial.rangeSupported || segment.rangeSupported,
                     firstByteReceived = segmentReadable,
                     redirect = initial.redirected || segment.redirected,
-                    error = if (segmentReadable) null else
-                        "HLS manifest loaded, but its first media segment was not confirmed (HTTP ${segment.statusCode}).",
-                    outcome = outcome,
+                    error = segment.error,
+                    outcome = segment.outcome,
                     validatedSegment = segmentReadable,
                     finalEndpoint = finalEndpoint
                 )
@@ -256,6 +246,97 @@ object StreamDiagnostics {
         }
     }
 
+    private data class HlsSegmentProbe(
+        val outcome: StreamProbeOutcome,
+        val statusCode: Int?,
+        val rangeSupported: Boolean,
+        val redirected: Boolean,
+        val error: String?
+    )
+
+    /**
+     * Follows at most two nested HLS playlists (master -> variant -> media segment).
+     * This prevents a reachable master/variant manifest from being reported as a playable segment.
+     */
+    private fun probeHlsMedia(
+        manifestUrl: URL,
+        manifest: String,
+        userAgent: String?,
+        referer: String?,
+        depth: Int
+    ): HlsSegmentProbe {
+        val reference = findHlsMediaReference(manifest)
+            ?: return HlsSegmentProbe(
+                StreamProbeOutcome.INCONCLUSIVE, null, false, false,
+                "HLS manifest was reachable, but no media URI was found."
+            )
+        val sample = request(
+            URL(manifestUrl, reference),
+            userAgent,
+            referer,
+            MAX_SEGMENT_BYTES
+        )
+        val status = sample.statusCode
+        if (status in 401..403 || status == 407 || status == 429) {
+            return HlsSegmentProbe(
+                StreamProbeOutcome.RESTRICTED, status, sample.rangeSupported, sample.redirected,
+                "HLS media request was restricted (HTTP $status)."
+            )
+        }
+        if (status == 404 || status == 410 || status in 500..599) {
+            return HlsSegmentProbe(
+                StreamProbeOutcome.OFFLINE, status, sample.rangeSupported, sample.redirected,
+                "HLS media request failed (HTTP $status)."
+            )
+        }
+        if (status !in 200..299 || sample.body.isEmpty()) {
+            return HlsSegmentProbe(
+                StreamProbeOutcome.INCONCLUSIVE, status, sample.rangeSupported, sample.redirected,
+                "HLS media response was not confirmed (HTTP $status)."
+            )
+        }
+
+        val preview = sample.bodyText().trimStart('\uFEFF', ' ', '\r', '\n')
+        val nestedManifest = preview.startsWith("#EXTM3U", ignoreCase = true) ||
+            sample.contentType?.contains("mpegurl", ignoreCase = true) == true ||
+            sample.contentType?.contains("vnd.apple.mpegurl", ignoreCase = true) == true
+        if (nestedManifest) {
+            if (depth >= MAX_HLS_NESTED_PLAYLISTS) {
+                return HlsSegmentProbe(
+                    StreamProbeOutcome.INCONCLUSIVE, status, sample.rangeSupported, sample.redirected,
+                    "Too many nested HLS playlists; the media segment was not confirmed."
+                )
+            }
+            val nested = probeHlsMedia(
+                manifestUrl = sample.finalUrl,
+                manifest = sample.bodyText(),
+                userAgent = userAgent,
+                referer = referer,
+                depth = depth + 1
+            )
+            return nested.copy(
+                rangeSupported = sample.rangeSupported || nested.rangeSupported,
+                redirected = sample.redirected || nested.redirected
+            )
+        }
+
+        val htmlOrStructured = sample.contentType?.let {
+            it.contains("text/html", ignoreCase = true) ||
+                it.contains("json", ignoreCase = true) ||
+                it.contains("xml", ignoreCase = true)
+        } == true || preview.startsWith("{") || preview.startsWith("[") ||
+            preview.startsWith("<html", ignoreCase = true)
+        if (htmlOrStructured) {
+            return HlsSegmentProbe(
+                StreamProbeOutcome.INCONCLUSIVE, status, sample.rangeSupported, sample.redirected,
+                "The HLS media URL returned a web or structured error page."
+            )
+        }
+        return HlsSegmentProbe(
+            StreamProbeOutcome.ONLINE, status, sample.rangeSupported, sample.redirected, null
+        )
+    }
+
     private fun findHlsMediaReference(manifest: String): String? {
         val lines = manifest.lineSequence().map(String::trim)
             .filter(String::isNotEmpty).toList()
@@ -316,4 +397,5 @@ object StreamDiagnostics {
     private const val READ_TIMEOUT_MS = 6_000
     private const val MAX_PROBE_BYTES = 8 * 1024
     private const val MAX_SEGMENT_BYTES = 4 * 1024
+    private const val MAX_HLS_NESTED_PLAYLISTS = 2
 }
