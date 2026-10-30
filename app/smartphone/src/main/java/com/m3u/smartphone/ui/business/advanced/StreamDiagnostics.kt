@@ -34,6 +34,88 @@ data class StreamDiagnosticResult(
 )
 
 object StreamDiagnostics {
+    /**
+     * Tests the playlist URL itself. A regular IPTV M3U and an HLS manifest both use
+     * #EXTM3U, but a regular M3U is not a video segment: its first channel being offline
+     * must not make the entire group appear offline.
+     */
+    fun probePlaylistSource(rawUrl: String, userAgent: String? = null): StreamDiagnosticResult {
+        val started = System.nanoTime()
+        val parsed = parseInput(rawUrl, userAgent)
+            ?: return failed("(invalid source)", started, "The playlist link is invalid.")
+        val url = parsed.url
+        if (!url.protocol.equals("http", true) && !url.protocol.equals("https", true)) {
+            return failed(safeEndpoint(url), started, "Only HTTP and HTTPS playlist links can be checked.")
+        }
+
+        return try {
+            val sample = request(url, parsed.userAgent, parsed.referer, MAX_PLAYLIST_PROBE_BYTES)
+            val endpoint = safeEndpoint(url)
+            val finalEndpoint = safeEndpoint(sample.finalUrl)
+            classifyStatus(sample.statusCode)?.let { outcome ->
+                return StreamDiagnosticResult(
+                    endpoint, sample.statusCode, elapsedMs(started), sample.contentType,
+                    sample.contentLength, sample.rangeSupported, sample.body.isNotEmpty(),
+                    sample.redirected, statusMessage(sample.statusCode, outcome), outcome,
+                    false, finalEndpoint
+                )
+            }
+            if (sample.statusCode !in 200..299 || sample.body.isEmpty()) {
+                return StreamDiagnosticResult(
+                    endpoint, sample.statusCode, elapsedMs(started), sample.contentType,
+                    sample.contentLength, sample.rangeSupported, sample.body.isNotEmpty(),
+                    sample.redirected, "Playlist source response was inconclusive (HTTP ${sample.statusCode}).",
+                    StreamProbeOutcome.INCONCLUSIVE, false, finalEndpoint
+                )
+            }
+
+            val text = sample.bodyText().trimStart('\uFEFF', ' ', '\r', '\n')
+            if (looksLikeTextError(sample.contentType, sample.body)) {
+                return StreamDiagnosticResult(
+                    endpoint, sample.statusCode, elapsedMs(started), sample.contentType,
+                    sample.contentLength, sample.rangeSupported, true, sample.redirected,
+                    "The URL returned a web or text error page rather than a playlist.",
+                    StreamProbeOutcome.INCONCLUSIVE, false, finalEndpoint
+                )
+            }
+
+            val isHls = text.startsWith("#EXTM3U", ignoreCase = true) && (
+                text.contains("#EXT-X-STREAM-INF", ignoreCase = true) ||
+                    text.contains("#EXT-X-TARGETDURATION", ignoreCase = true) ||
+                    text.contains("#EXT-X-MEDIA-SEQUENCE", ignoreCase = true) ||
+                    text.contains("#EXT-X-PLAYLIST-TYPE", ignoreCase = true) ||
+                    text.contains("#EXT-X-ENDLIST", ignoreCase = true)
+                )
+            if (text.startsWith("#EXTM3U", ignoreCase = true) && !isHls) {
+                val entryCount = text.lineSequence().map(String::trim).count { line ->
+                    if (line.isBlank() || line.startsWith("#")) false
+                    else runCatching {
+                        val candidate = URL(line.substringBefore('|').trim())
+                        candidate.protocol.equals("http", true) || candidate.protocol.equals("https", true)
+                    }.getOrDefault(false)
+                }
+                val outcome = if (entryCount > 0) StreamProbeOutcome.ONLINE else StreamProbeOutcome.INCONCLUSIVE
+                return StreamDiagnosticResult(
+                    endpoint, sample.statusCode, elapsedMs(started), sample.contentType,
+                    sample.contentLength, sample.rangeSupported, true, sample.redirected,
+                    if (entryCount > 0) "Playlist source loaded; found $entryCount HTTP stream entries in the response sample."
+                    else "M3U header was present, but no HTTP stream entries were found in the response sample.",
+                    outcome, false, finalEndpoint
+                )
+            }
+
+            // HLS manifests and direct media URLs use the normal media probe so the first
+            // media segment, rather than only the manifest URL, is checked.
+            probe(rawUrl, userAgent)
+        } catch (exception: Exception) {
+            failed(
+                safeEndpoint(url),
+                started,
+                "Playlist source check was inconclusive (${exception.javaClass.simpleName})."
+            )
+        }
+    }
+
     fun probe(rawUrl: String, userAgent: String? = null): StreamDiagnosticResult {
         val started = System.nanoTime()
         val parsed = parseInput(rawUrl, userAgent)
@@ -386,6 +468,7 @@ object StreamDiagnostics {
     private const val CONNECT_TIMEOUT_MS = 5_000
     private const val READ_TIMEOUT_MS = 6_000
     private const val MAX_PROBE_BYTES = 8 * 1024
+    private const val MAX_PLAYLIST_PROBE_BYTES = 64 * 1024
     private const val MAX_SEGMENT_BYTES = 4 * 1024
     private const val MAX_HLS_NESTED_PLAYLISTS = 2
     private const val BINARY_PRINTABLE_RATIO = 0.85

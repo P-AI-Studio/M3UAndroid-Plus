@@ -353,8 +353,6 @@ class AdvancedToolsViewModel @Inject constructor(
                         try {
                             val info = xtreamParser.getInfo(input)
                             val accountStatus = info.userInfo.status.orEmpty()
-                            val active = accountStatus.equals("Active", ignoreCase = true) ||
-                                accountStatus.equals("Enabled", ignoreCase = true)
                             val sessionInfo = buildString {
                                 append("Xtream account status: ")
                                 append(accountStatus.ifBlank { "not provided" })
@@ -378,10 +376,10 @@ class AdvancedToolsViewModel @Inject constructor(
                                 redirect = false,
                                 error = sessionInfo,
                                 outcome = when (accountStatus.lowercase()) {
-                                "active", "enabled" -> StreamProbeOutcome.ONLINE
-                                "disabled", "expired", "banned", "blocked" -> StreamProbeOutcome.RESTRICTED
-                                else -> StreamProbeOutcome.INCONCLUSIVE
-                            }
+                                    "active", "enabled" -> StreamProbeOutcome.ONLINE
+                                    "disabled", "expired", "banned", "blocked" -> StreamProbeOutcome.RESTRICTED
+                                    else -> StreamProbeOutcome.INCONCLUSIVE
+                                }
                             )
                         } catch (cancelled: CancellationException) {
                             throw cancelled
@@ -402,7 +400,7 @@ class AdvancedToolsViewModel @Inject constructor(
                     }
                 } else {
                     withContext(Dispatchers.IO) {
-                        StreamDiagnostics.probe(playlistUrl, playlist?.userAgent)
+                        StreamDiagnostics.probePlaylistSource(playlistUrl, playlist?.userAgent)
                     }
                 }
                 _sourceDiagnostics.update { it + (playlistUrl to result) }
