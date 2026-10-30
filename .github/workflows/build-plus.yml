@@ -98,22 +98,15 @@ jobs:
             echo "Upload-key secrets are configured; a Play-uploadable AAB will be built."
           else
             echo "build_kind=ReleasePreview" >> "$GITHUB_OUTPUT"
-            echo "Upload-key secrets are not configured; building a Release APK only. No debug-signed AAB will be published."
+            echo "Upload-key secrets are not configured; building preview APK and AAB artifacts for local signing with the private Plus upload key."
           fi
 
-      - name: Build optimized ARM64 Release APK (and signed AAB when upload key is configured)
-        env:
-          BUILD_KIND: ${{ steps.signing.outputs.build_kind }}
+      - name: Build optimized ARM64 Release APK and Android App Bundle
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$BUILD_KIND" == "Release" ]]; then
-            ./gradlew --no-daemon --stacktrace --console=plain -Pm3uArm64=true \
-              :app:smartphone:assembleRelease :app:smartphone:bundleRelease
-          else
-            ./gradlew --no-daemon --stacktrace --console=plain -Pm3uArm64=true \
-              :app:smartphone:assembleRelease
-          fi
+          ./gradlew --no-daemon --stacktrace --console=plain -Pm3uArm64=true \
+            :app:smartphone:assembleRelease :app:smartphone:bundleRelease
 
       - name: Verify package, target SDK, ARM64 ABI and APK signature
         env:
@@ -179,15 +172,13 @@ jobs:
 
           mkdir -p dist
           cp "$APK" "dist/M3UAndroid-1.15.4-plus4-arm64-${BUILD_KIND,,}.apk"
-          if [[ "$BUILD_KIND" == "Release" ]]; then
-            AAB="app/smartphone/build/outputs/bundle/release/app-smartphone-release.aab"
-            test -s "$AAB" || { echo 'Release AAB was not produced'; exit 1; }
-            jarsigner -verify "$AAB"
-            cp "$AAB" "dist/M3UAndroid-1.15.4-plus4-arm64-release.aab"
-            sha256sum "dist/M3UAndroid-1.15.4-plus4-arm64-release.apk" "dist/M3UAndroid-1.15.4-plus4-arm64-release.aab" > dist/SHA256SUMS.txt
-          else
-            sha256sum "dist/M3UAndroid-1.15.4-plus4-arm64-releasepreview.apk" > dist/SHA256SUMS.txt
-          fi
+          AAB="app/smartphone/build/outputs/bundle/release/app-smartphone-release.aab"
+          test -s "$AAB" || { echo 'Release AAB was not produced'; exit 1; }
+          jarsigner -verify "$AAB"
+          cp "$AAB" "dist/M3UAndroid-1.15.4-plus4-arm64-${BUILD_KIND,,}.aab"
+          sha256sum \
+            "dist/M3UAndroid-1.15.4-plus4-arm64-${BUILD_KIND,,}.apk" \
+            "dist/M3UAndroid-1.15.4-plus4-arm64-${BUILD_KIND,,}.aab" > dist/SHA256SUMS.txt
           printf '%s\n' "$BUILD_KIND" > dist/BUILD_KIND.txt
 
       - name: Upload verified Android package
