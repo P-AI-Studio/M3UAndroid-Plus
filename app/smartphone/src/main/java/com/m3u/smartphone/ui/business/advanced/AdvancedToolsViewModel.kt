@@ -290,21 +290,60 @@ class AdvancedToolsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val playlist = withContext(Dispatchers.IO) { playlistRepository.get(playlistUrl) }
-                val probeUrl = if (playlist?.source == com.m3u.data.database.model.DataSource.Xtream) {
-                    runCatching {
-                        val input = XtreamInput.decodeFromPlaylistUrlOrNull(playlistUrl)
-                            ?: error("Invalid Xtream source URL")
-                        XtreamParser.createInfoUrl(
-                            basicUrl = input.basicUrl,
-                            username = input.username,
-                            password = input.password
-                        )
-                    }.getOrDefault(playlistUrl)
+                val result = if (playlist?.source == com.m3u.data.database.model.DataSource.Xtream) {
+                    val input = XtreamInput.decodeFromPlaylistUrlOrNull(playlistUrl)
+                        ?: error("Invalid Xtream source URL")
+                    withContext(Dispatchers.IO) {
+                        try {
+                            val info = xtreamParser.getInfo(input)
+                            val accountStatus = info.userInfo.status.orEmpty()
+                            val active = accountStatus.equals("Active", ignoreCase = true) ||
+                                accountStatus.equals("Enabled", ignoreCase = true)
+                            val sessionInfo = buildString {
+                                append("Xtream account status: ")
+                                append(accountStatus.ifBlank { "not provided" })
+                                val activeConnections = info.userInfo.activeCons
+                                val maxConnections = info.userInfo.maxConnections
+                                if (!activeConnections.isNullOrBlank() || !maxConnections.isNullOrBlank()) {
+                                    append(" · sessions ")
+                                    append(activeConnections ?: "?")
+                                    append("/")
+                                    append(maxConnections ?: "?")
+                                }
+                            }
+                            StreamDiagnosticResult(
+                                endpoint = input.basicUrl,
+                                statusCode = 200,
+                                elapsedMs = 0L,
+                                contentType = "application/json",
+                                contentLength = null,
+                                rangeSupported = false,
+                                firstByteReceived = true,
+                                redirect = false,
+                                error = sessionInfo,
+                                outcome = if (active) StreamProbeOutcome.ONLINE else StreamProbeOutcome.RESTRICTED
+                            )
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (exception: Exception) {
+                            StreamDiagnosticResult(
+                                endpoint = input.basicUrl,
+                                statusCode = null,
+                                elapsedMs = 0L,
+                                contentType = null,
+                                contentLength = null,
+                                rangeSupported = false,
+                                firstByteReceived = false,
+                                redirect = false,
+                                error = "Xtream account check failed: ${exception.javaClass.simpleName}",
+                                outcome = StreamProbeOutcome.OFFLINE
+                            )
+                        }
+                    }
                 } else {
-                    playlistUrl
-                }
-                val result = withContext(Dispatchers.IO) {
-                    StreamDiagnostics.probe(probeUrl, playlist?.userAgent)
+                    withContext(Dispatchers.IO) {
+                        StreamDiagnostics.probe(playlistUrl, playlist?.userAgent)
+                    }
                 }
                 _sourceDiagnostics.update { it + (playlistUrl to result) }
             } catch (cancelled: CancellationException) {
@@ -327,21 +366,6 @@ class AdvancedToolsViewModel @Inject constructor(
             } finally {
                 _sourceTestsRunning.update { it - playlistUrl }
             }
-        }
-    }
-
-    fun cancelBatchDiagnostics() {
-        batchJob?.cancel()
-        batchJob = null
-    }
-
-    fun diagnoseStream(url: String) {
-        viewModelScope.launch {
-            _diagnosticRunning.value = true
-            _diagnostic.value = null
-            val result = withContext(Dispatchers.IO) { StreamDiagnostics.probe(url) }
-            _diagnostic.value = result
-            _diagnosticRunning.value = false
         }
     }
 
