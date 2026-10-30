@@ -63,6 +63,7 @@ interface PlaylistRepository {
     suspend fun restoreOrThrow(uri: Uri)
 
     suspend fun pinOrUnpinCategory(url: String, category: String)
+    suspend fun reorderPinnedCategories(url: String, categories: List<String>)
 
     suspend fun hideOrUnhideCategory(url: String, category: String)
 
