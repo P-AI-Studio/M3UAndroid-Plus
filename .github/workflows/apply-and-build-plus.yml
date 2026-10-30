@@ -39,6 +39,10 @@ jobs:
           python3 m3u_enhancement_pack/apply.py --source .
           python3 -m unittest discover -s m3u_enhancement_pack/tests -v
           rm -rf .m3u-plus-patch-backup
+          # GitHub Actions GITHUB_TOKEN cannot push new workflow files without the
+          # separate workflows permission. Add build-plus.yml via the connected
+          # GitHub Contents API after the source commit.
+          rm -f .github/workflows/build-plus.yml
           rm -f m3u-plus-patch.tar.xz.b64 m3u-plus-patch.part*
 
       - name: Commit Plus integration without touching other branches
