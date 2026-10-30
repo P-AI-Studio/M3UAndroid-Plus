@@ -142,6 +142,40 @@ jobs:
           "$APKSIGNER" verify --verbose --print-certs "$APK"
           unzip -l "$APK" | grep 'lib/arm64-v8a/' | head -n 10
 
+          # Google Play's 16 KB page-size compatibility: verify APK ZIP alignment
+          # and every packaged ELF LOAD segment, not just the presence of .so files.
+          ZIPALIGN="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/zipalign"
+          "$ZIPALIGN" -c -P 16 -v 4 "$APK"
+          python3 - "$APK" "$ANDROID_HOME" <<'PY'
+          import pathlib, re, subprocess, sys, tempfile, zipfile
+          apk = pathlib.Path(sys.argv[1])
+          android_home = pathlib.Path(sys.argv[2])
+          ndk_root = android_home / "ndk"
+          ndks = sorted(p for p in ndk_root.iterdir() if p.is_dir()) if ndk_root.exists() else []
+          if not ndks:
+              raise SystemExit("No Android NDK installed; cannot verify ELF 16 KB alignment.")
+          ndk = ndks[-1]
+          tool = ndk / "toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump"
+          if not tool.exists():
+              raise SystemExit(f"llvm-objdump missing in {ndk}")
+          bad = []
+          with tempfile.TemporaryDirectory() as tmp, zipfile.ZipFile(apk) as z:
+              for name in z.namelist():
+                  if not name.startswith("lib/arm64-v8a/") or not name.endswith(".so"):
+                      continue
+                  dest = pathlib.Path(tmp) / pathlib.Path(name).name
+                  dest.write_bytes(z.read(name))
+                  output = subprocess.check_output([str(tool), "-p", str(dest)], text=True)
+                  loads = [int(x) for x in re.findall(r"LOAD\\s+.*?align\\s+2\\*\\*(\\d+)", output)]
+                  if not loads or min(loads) < 14:
+                      bad.append((name, loads))
+          if bad:
+              for name, loads in bad:
+                  print(f"UNALIGNED: {name}: LOAD alignments={loads}")
+              raise SystemExit("At least one ARM64 native library is not 16 KB ELF aligned.")
+          print("All packaged ARM64 ELF LOAD segments are 16 KB aligned.")
+          PY
+
           mkdir -p dist
           cp "$APK" "dist/M3UAndroid-1.15.3-plus3-arm64-${BUILD_KIND,,}.apk"
           if [[ "$BUILD_KIND" == "Release" ]]; then
