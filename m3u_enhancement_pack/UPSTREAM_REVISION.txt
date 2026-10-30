@@ -1,0 +1,6 @@
+Repository: https://github.com/oxyroid/M3UAndroid
+APK source marker: 3c61444813e3b72c2431f892436dc4bd668daf50
+Fork base commit selected for Plus: 32f3658d4cd62b1f11bc29cc6cfc8aded8f37239
+Original inspected APK: version 1.15.0 (versionCode 144), package com.m3u.smartphone
+Fork source base: version 1.15.1 (versionCode 145), package com.m3u.smartphone
+Plus target: com.m3u.smartphone.enhanced, version 1.15.1-plus1 (versionCode 146)

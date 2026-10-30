@@ -12,6 +12,7 @@ import com.m3u.data.database.model.Playlist
 import com.m3u.smartphone.ui.business.favourite.FavoriteRoute
 import com.m3u.smartphone.ui.business.foryou.ForyouRoute
 import com.m3u.smartphone.ui.business.setting.SettingRoute
+import com.m3u.smartphone.ui.business.advanced.AdvancedToolsRoute
 import com.m3u.smartphone.ui.material.components.Destination
 import com.m3u.smartphone.ui.material.ktx.Edge
 import com.m3u.smartphone.ui.material.ktx.blurEdge
@@ -81,6 +82,27 @@ fun NavGraphBuilder.rootGraph(
         SettingRoute(
             contentPadding = contentPadding,
             onDetailVisibilityChanged = onNestedDetailVisibilityChanged,
+            modifier = Modifier
+                .fillMaxSize()
+                .then(
+                    if (showBottomEdgeBlur) {
+                        Modifier.blurEdge(
+                            edge = Edge.Bottom,
+                            color = MaterialTheme.colorScheme.background,
+                        )
+                    } else {
+                        Modifier
+                    },
+                ),
+        )
+    }
+    composable(
+        route = Destination.Advanced.name,
+        enterTransition = { fadeIn() },
+        exitTransition = { fadeOut() }
+    ) {
+        AdvancedToolsRoute(
+            navigateToChannel = navigateToChannel,
             modifier = Modifier
                 .fillMaxSize()
                 .then(

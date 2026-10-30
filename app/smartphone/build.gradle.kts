@@ -23,24 +23,47 @@ extensions.configure<KotlinAndroidProjectExtension> {
 
 val m3uMockServerUrl = providers.gradleProperty("m3uMockServerUrl").orElse("http://10.0.2.2:8080")
 
+val plusReleaseStoreFile = System.getenv("M3U_RELEASE_KEYSTORE_PATH")
+val plusReleaseStorePassword = System.getenv("M3U_RELEASE_STORE_PASSWORD")
+val plusReleaseKeyAlias = System.getenv("M3U_RELEASE_KEY_ALIAS")
+val plusReleaseKeyPassword = System.getenv("M3U_RELEASE_KEY_PASSWORD")
+val plusReleaseSigningConfigured = listOf(
+    plusReleaseStoreFile, plusReleaseStorePassword, plusReleaseKeyAlias, plusReleaseKeyPassword
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "com.m3u.smartphone"
     compileSdk = 37
     defaultConfig {
-        applicationId = "com.m3u.smartphone"
+        applicationId = "com.m3u.smartphone.enhanced"
         minSdk = 26
         targetSdk = 33
-        versionCode = 145
-        versionName = "1.15.1"
+        versionCode = 146
+        versionName = "1.15.1-plus1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         testInstrumentationRunnerArguments["m3uMockServerUrl"] = m3uMockServerUrl.get()
+    }
+    signingConfigs {
+        if (plusReleaseSigningConfigured) {
+            create("plusRelease") {
+                storeFile = file(plusReleaseStoreFile!!)
+                storePassword = plusReleaseStorePassword
+                keyAlias = plusReleaseKeyAlias
+                keyPassword = plusReleaseKeyPassword
+            }
+        }
     }
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("debug")
+            // Prefer the private Plus release keystore; debug signing is a local-only fallback.
+            signingConfig = if (plusReleaseSigningConfigured) {
+                signingConfigs.getByName("plusRelease")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
         debug {
             isMinifyEnabled = false
@@ -68,16 +91,19 @@ android {
                 .taskNames
                 .find { it.contains("snapshotChannel", ignoreCase = true) } != null
 
-            val richCodec = gradle
-                .startParameter
-                .taskNames
-                .find { it.contains("richCodec", ignoreCase = true) } != null
+            val richCodec = providers.gradleProperty("m3uArm64").orNull?.toBoolean()
+                ?: gradle.startParameter.taskNames.any { it.contains("richCodec", ignoreCase = true) }
 
             isEnable = !benchmark && !snapshotChannel && richCodec
 
             reset()
-            include("x86", "x86_64", "arm64-v8a", "armeabi-v7a")
-            isUniversalApk = true
+            if (richCodec) {
+                include("arm64-v8a")
+                isUniversalApk = false
+            } else {
+                include("x86", "x86_64", "arm64-v8a", "armeabi-v7a")
+                isUniversalApk = true
+            }
         }
     }
     compileOptions {
@@ -157,6 +183,7 @@ dependencies {
     implementation(libs.androidx.compose.runtime)
     implementation(libs.androidx.compose.ui.util)
     implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.paging.compose)
     // compose-material3
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material3.window.size.clazz)

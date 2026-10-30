@@ -263,6 +263,9 @@ interface ChannelDao {
     @Query("SELECT * FROM streams WHERE playlist_url = :playlistUrl")
     suspend fun getByPlaylistUrl(playlistUrl: String): List<Channel>
 
+    @Query("SELECT * FROM streams WHERE playlist_url = :playlistUrl ORDER BY id LIMIT :limit")
+    suspend fun getFirstByPlaylistUrl(playlistUrl: String, limit: Int): List<Channel>
+
     @Query(
         """
         SELECT stream.url AS url,

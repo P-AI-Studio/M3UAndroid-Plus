@@ -29,6 +29,7 @@ interface ChannelRepository {
     ): Flow<AdjacentChannels>
 
     suspend fun getByPlaylistUrl(playlistUrl: String): List<Channel>
+    suspend fun getFirstByPlaylistUrl(playlistUrl: String, limit: Int): List<Channel>
     suspend fun getByRelationIds(relationIds: List<String>): List<Channel>
     suspend fun favouriteOrUnfavourite(id: Int)
     suspend fun hide(id: Int, target: Boolean)

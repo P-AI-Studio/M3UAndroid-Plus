@@ -62,6 +62,9 @@ internal class ChannelRepositoryImpl @Inject constructor(
 
     override suspend fun getByPlaylistUrl(playlistUrl: String): List<Channel> = channelDao.getByPlaylistUrl(playlistUrl)
 
+    override suspend fun getFirstByPlaylistUrl(playlistUrl: String, limit: Int): List<Channel> =
+        channelDao.getFirstByPlaylistUrl(playlistUrl, limit.coerceIn(1, 20))
+
     override suspend fun getByRelationIds(relationIds: List<String>): List<Channel> =
         if (relationIds.isEmpty()) emptyList() else channelDao.getByRelationIds(relationIds)
 

@@ -6,9 +6,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Collections
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.rounded.Collections
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Build
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.m3u.i18n.R.string
@@ -35,6 +37,11 @@ enum class Destination(
         selectedIcon = Icons.Rounded.Settings,
         unselectedIcon = Icons.Outlined.Settings,
         iconTextId = string.ui_destination_setting
+    ),
+    Advanced(
+        selectedIcon = Icons.Rounded.Build,
+        unselectedIcon = Icons.Outlined.Build,
+        iconTextId = string.ui_destination_advanced
     );
 
     companion object {
