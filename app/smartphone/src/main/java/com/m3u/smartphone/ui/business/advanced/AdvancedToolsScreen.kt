@@ -375,24 +375,109 @@ private fun HomeLayoutPane(viewModel: AdvancedToolsViewModel) {
 @Composable
 private fun EpgPane(viewModel: AdvancedToolsViewModel) {
     val epgs by viewModel.epgPlaylists.collectAsStateWithLifecycle(initialValue = emptyList())
+    val playlists by viewModel.playlists.collectAsStateWithLifecycle(initialValue = emptyMap())
     var epgUrl by remember(epgs) { mutableStateOf(epgs.firstOrNull()?.url.orEmpty()) }
+    var epgMenuExpanded by remember { mutableStateOf(false) }
+    var playlistUrl by remember(playlists) { mutableStateOf(playlists.keys.firstOrNull()?.url.orEmpty()) }
+    var playlistMenuExpanded by remember { mutableStateOf(false) }
+    val sourcePlaylist = playlists.keys.firstOrNull { it.url == playlistUrl }
+    val channels by remember(playlistUrl) {
+        viewModel.channelsForPlaylist(playlistUrl)
+    }.collectAsStateWithLifecycle(initialValue = emptyList())
+    var channelSearch by remember { mutableStateOf("") }
+    var channelMenuExpanded by remember { mutableStateOf(false) }
     var relationId by remember { mutableStateOf("") }
+    var selectedChannelTitle by remember { mutableStateOf("") }
+
     Column(Modifier.fillMaxSize().padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Choose an EPG source and enter the channel TVG ID (relation ID).", style = MaterialTheme.typography.bodySmall)
-        if (epgs.isEmpty()) {
-            Text("No EPG source is configured. Add one from Settings → Playlist Management → EPG.")
-        } else {
-            epgs.forEach { epg ->
-                Button(onClick = { epgUrl = epg.url }, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (epg.url == epgUrl) "✓ ${epg.title}" else epg.title)
-                }
+        Text(
+            "Choose a playlist and select one of its channels. The EPG ID is filled automatically when the playlist contains one.",
+            style = MaterialTheme.typography.bodySmall
+        )
+        Button(onClick = { playlistMenuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+            Text(sourcePlaylist?.title ?: "Choose channel group")
+        }
+        DropdownMenu(expanded = playlistMenuExpanded, onDismissRequest = { playlistMenuExpanded = false }) {
+            playlists.forEach { (playlist, count) ->
+                DropdownMenuItem(
+                    text = { Text("${playlist.title} ($count channels)") },
+                    onClick = {
+                        playlistUrl = playlist.url
+                        playlistMenuExpanded = false
+                        selectedChannelTitle = ""
+                        relationId = ""
+                    }
+                )
             }
         }
-        OutlinedTextField(relationId, { relationId = it }, label = { Text("Channel TVG ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(
+            value = channelSearch,
+            onValueChange = { channelSearch = it; channelMenuExpanded = true },
+            label = { Text("Find a channel") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Button(
+            onClick = { channelMenuExpanded = true },
+            enabled = channels.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth()
+        ) { Text(if (selectedChannelTitle.isBlank()) "Select channel" else selectedChannelTitle) }
+        DropdownMenu(expanded = channelMenuExpanded, onDismissRequest = { channelMenuExpanded = false }) {
+            channels.asSequence()
+                .filter { channelSearch.isBlank() || it.title.contains(channelSearch, ignoreCase = true) || it.category.contains(channelSearch, ignoreCase = true) }
+                .take(35)
+                .forEach { channel ->
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text(channel.title)
+                                if (channel.category.isNotBlank()) {
+                                    Text(channel.category, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        },
+                        onClick = {
+                            selectedChannelTitle = channel.title
+                            relationId = channel.relationId.orEmpty()
+                            channelSearch = channel.title
+                            channelMenuExpanded = false
+                        }
+                    )
+                }
+        }
+        if (selectedChannelTitle.isNotBlank() && relationId.isBlank()) {
+            Text(
+                "This channel has no saved EPG ID. Enter it manually below if your provider documents one.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.tertiary
+            )
+        }
+        OutlinedTextField(
+            value = relationId,
+            onValueChange = { relationId = it },
+            label = { Text("Channel TVG / EPG ID") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Button(onClick = { epgMenuExpanded = true }, modifier = Modifier.fillMaxWidth(), enabled = epgs.isNotEmpty()) {
+            val selectedEpg = epgs.firstOrNull { it.url == epgUrl }
+            Text(selectedEpg?.title ?: "Choose EPG source")
+        }
+        DropdownMenu(expanded = epgMenuExpanded, onDismissRequest = { epgMenuExpanded = false }) {
+            epgs.forEach { epg ->
+                DropdownMenuItem(
+                    text = { Text(epg.title) },
+                    onClick = { epgUrl = epg.url; epgMenuExpanded = false }
+                )
+            }
+        }
+        if (epgs.isEmpty()) {
+            Text("No EPG source is configured. Add one from Settings → Playlist Management → EPG.")
+        }
         if (epgUrl.isNotBlank() && relationId.isNotBlank()) {
             val programmes = remember(epgUrl, relationId) { viewModel.programmes(epgUrl, relationId) }
                 .collectAsLazyPagingItems()
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(programmes.itemCount) { index ->
                     val programme = programmes[index] ?: return@items
                     ProgrammeCard(programme)
