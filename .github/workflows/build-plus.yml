@@ -100,7 +100,7 @@ jobs:
           fi
 
       - name: Build optimized ARM64 Release variant
-        run: ./gradlew --no-daemon --stacktrace --console=plain -Pm3uArm64=true :app:smartphone:assembleStableChannelRichCodecRelease
+        run: ./gradlew --no-daemon --stacktrace --console=plain -Pm3uArm64=true :app:smartphone:assembleRelease
 
       - name: Verify independent package, ARM64 ABI and APK signature
         env:
