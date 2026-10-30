@@ -91,6 +91,16 @@ class AdvancedToolsViewModel @Inject constructor(
     private val _sourceTestsRunning = MutableStateFlow<Set<String>>(emptySet())
     val sourceTestsRunning: StateFlow<Set<String>> = _sourceTestsRunning.asStateFlow()
 
+    private val playlistOrderStore = PlaylistOrderStore(context)
+    val playlistOrder: StateFlow<List<String>> = playlistOrderStore.order
+
+    fun reorderPlaylists(urls: List<String>) {
+        playlistOrderStore.saveOrder(urls)
+    }
+
+    fun orderedPlaylists(playlists: Map<Playlist, Int>): Map<Playlist, Int> =
+        playlistOrderStore.orderPlaylists(playlists, playlistOrderStore.order.value)
+
     fun searchChannels(query: String): Flow<PagingData<Channel>> {
         val normalized = query.trim()
         if (normalized.isBlank()) return flowOf(PagingData.empty<Channel>())
