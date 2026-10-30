@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
@@ -93,16 +94,27 @@ class AdvancedToolsViewModel @Inject constructor(
     fun searchChannels(query: String): Flow<PagingData<Channel>> {
         val normalized = query.trim()
         if (normalized.isBlank()) return flowOf(PagingData.empty<Channel>())
-        return Pager(
-            config = PagingConfig(pageSize = 40, initialLoadSize = 80, enablePlaceholders = false)
-        ) {
-            channelRepository.search(normalized)
-        }.flow.cachedIn(viewModelScope)
+        return flow {
+            delay(250)
+            emitAll(
+                Pager(
+                    config = PagingConfig(pageSize = 40, initialLoadSize = 80, enablePlaceholders = false)
+                ) {
+                    channelRepository.search(normalized)
+                }.flow
+            )
+        }.cachedIn(viewModelScope)
     }
 
     fun programmes(epgUrl: String, tvgId: String): Flow<PagingData<Programme>> =
         programmeRepository.pagingProgrammes(epgUrl, tvgId.trim())
             .cachedIn(viewModelScope)
+
+    fun channelsForPlaylist(playlistUrl: String): Flow<List<Channel>> = flow {
+        emit(withContext(Dispatchers.IO) {
+            channelRepository.getByPlaylistUrl(playlistUrl)
+        })
+    }
 
     fun importBulkLinks(title: String, rawLinks: String) {
         viewModelScope.launch {
@@ -284,6 +296,23 @@ class AdvancedToolsViewModel @Inject constructor(
                     StreamDiagnostics.probe(probeUrl, playlist?.userAgent)
                 }
                 _sourceDiagnostics.update { it + (playlistUrl to result) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (exception: Exception) {
+                _sourceDiagnostics.update {
+                    it + (playlistUrl to StreamDiagnosticResult(
+                        endpoint = "(hidden)",
+                        statusCode = null,
+                        elapsedMs = 0L,
+                        contentType = null,
+                        contentLength = null,
+                        rangeSupported = false,
+                        firstByteReceived = false,
+                        redirect = false,
+                        error = "Connection test failed: ${exception.javaClass.simpleName}",
+                        outcome = StreamProbeOutcome.INCONCLUSIVE
+                    ))
+                }
             } finally {
                 _sourceTestsRunning.update { it - playlistUrl }
             }
