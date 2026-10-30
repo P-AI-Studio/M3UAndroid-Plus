@@ -46,7 +46,7 @@ enum class Destination(
 
     companion object {
         fun of(route: String?): Destination? = try {
-            route?.let { valueOf(it) }
+            route?.let { valueOf(it.substringBefore('?').substringBefore('/')) }
         } catch (ignored: Exception) {
             null
         }
