@@ -1,4 +1,4 @@
-name: M3UAndroid Plus — ARM64 APK
+name: M3UAndroid Plus — ARM64 APK and Play App Bundle
 
 on:
   push:
@@ -40,7 +40,8 @@ jobs:
           set -euo pipefail
           test -f app/smartphone/src/main/java/com/m3u/smartphone/ui/business/advanced/AdvancedToolsScreen.kt
           grep -F 'applicationId = "com.m3u.smartphone.enhanced"' app/smartphone/build.gradle.kts
-          grep -F 'versionName = "1.15.1-plus1"' app/smartphone/build.gradle.kts
+          grep -F 'targetSdk = 36' app/smartphone/build.gradle.kts
+          grep -F 'versionName = "1.15.2-plus2"' app/smartphone/build.gradle.kts
           python3 -m unittest discover -s m3u_enhancement_pack/tests -v
 
       - name: Set up JDK 17
@@ -99,8 +100,8 @@ jobs:
             echo "Release signing secrets are not yet configured; building the optimized Release variant with a temporary debug signature for the private re-signing step."
           fi
 
-      - name: Build optimized ARM64 Release variant
-        run: ./gradlew --no-daemon --stacktrace --console=plain -Pm3uArm64=true :app:smartphone:assembleRelease
+      - name: Build optimized ARM64 Release APK and AAB
+        run: ./gradlew --no-daemon --stacktrace --console=plain -Pm3uArm64=true :app:smartphone:assembleRelease :app:smartphone:bundleRelease
 
       - name: Verify independent package, ARM64 ABI and APK signature
         env:
@@ -126,19 +127,24 @@ jobs:
           test -x "$APKSIGNER"
           "$AAPT" dump badging "$APK" > "$RUNNER_TEMP/badging.txt"
           grep -F "package: name='com.m3u.smartphone.enhanced'" "$RUNNER_TEMP/badging.txt"
+          grep -F "targetSdkVersion:'36'" "$RUNNER_TEMP/badging.txt"
           unzip -l "$APK" | grep 'lib/arm64-v8a/' | head -n 10
           "$APKSIGNER" verify --verbose --print-certs "$APK"
           mkdir -p dist
-          cp "$APK" "dist/M3UAndroid-1.15.1-plus1-arm64-${BUILD_KIND,,}.apk"
-          sha256sum "dist/M3UAndroid-1.15.1-plus1-arm64-${BUILD_KIND,,}.apk" > dist/SHA256SUMS.txt
+          cp "$APK" "dist/M3UAndroid-1.15.2-plus2-arm64-${BUILD_KIND,,}.apk"
+          AAB="app/smartphone/build/outputs/bundle/release/app-smartphone-release.aab"
+          test -s "$AAB" || { echo 'Release AAB was not produced'; find app/smartphone/build/outputs -type f -name '*.aab' || true; exit 1; }
+          cp "$AAB" "dist/M3UAndroid-1.15.2-plus2-arm64-${BUILD_KIND,,}.aab"
+          sha256sum "dist/M3UAndroid-1.15.2-plus2-arm64-${BUILD_KIND,,}.apk" "dist/M3UAndroid-1.15.2-plus2-arm64-${BUILD_KIND,,}.aab" > dist/SHA256SUMS.txt
           printf '%s\n' "$BUILD_KIND" > dist/BUILD_KIND.txt
 
       - name: Upload verified ARM64 APK
         uses: actions/upload-artifact@v4
         with:
-          name: M3UAndroid-Plus-1.15.1-${{ steps.signing.outputs.build_kind }}-ARM64
+          name: M3UAndroid-Plus-1.15.2-${{ steps.signing.outputs.build_kind }}-ARM64-Apk-And-Aab
           path: |
-            dist/M3UAndroid-1.15.1-plus1-arm64-*.apk
+            dist/M3UAndroid-1.15.2-plus2-arm64-*.apk
+            dist/M3UAndroid-1.15.2-plus2-arm64-*.aab
             dist/SHA256SUMS.txt
             dist/BUILD_KIND.txt
           if-no-files-found: error
