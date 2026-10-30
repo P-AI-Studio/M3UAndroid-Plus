@@ -19,6 +19,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -654,6 +655,7 @@ private fun ParentalPane() {
     var verify by remember { mutableStateOf("") }
     var categoriesText by remember { mutableStateOf(store.lockedCategories().joinToString(", ")) }
     var unlocked by remember { mutableStateOf(!store.hasPin()) }
+    var playbackLock by remember(context) { mutableStateOf(store.playbackLockEnabled()) }
     var message by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (!store.hasPin()) {
@@ -674,6 +676,28 @@ private fun ParentalPane() {
                 verify = ""
             }) { Text("Unlock") }
         } else {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Require PIN before playback", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "The Player screen pauses the stream until the PIN is verified.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = playbackLock,
+                    onCheckedChange = {
+                        playbackLock = it
+                        store.setPlaybackLockEnabled(it)
+                        message = if (it) "Playback PIN is enabled." else "Playback PIN is disabled."
+                    }
+                )
+            }
             Text("Categories hidden from global search until the PIN is entered:")
             OutlinedTextField(
                 categoriesText,
