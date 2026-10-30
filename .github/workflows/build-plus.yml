@@ -1,0 +1,140 @@
+name: M3UAndroid Plus — ARM64 APK
+
+on:
+  push:
+    branches: [ master, plus-implementation ]
+    paths:
+      - '.github/workflows/build-plus.yml'
+      - 'm3u_enhancement_pack/**'
+      - 'app/**'
+      - 'data/**'
+      - 'extension/**'
+      - 'i18n/**'
+  workflow_dispatch:
+
+concurrency:
+  group: m3uandroid-plus-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  JAVA_VERSION: '17'
+  ANDROID_API_LEVEL: '37'
+  ANDROID_BUILD_TOOLS: '36.0.0'
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout source and submodules
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Verify Plus source is integrated
+        run: |
+          set -euo pipefail
+          test -f app/smartphone/src/main/java/com/m3u/smartphone/ui/business/advanced/AdvancedToolsScreen.kt
+          grep -F 'applicationId = "com.m3u.smartphone.enhanced"' app/smartphone/build.gradle.kts
+          grep -F 'versionName = "1.15.1-plus1"' app/smartphone/build.gradle.kts
+          python3 -m unittest discover -s m3u_enhancement_pack/tests -v
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK platform and build tools
+        run: |
+          sdkmanager "platforms;android-${ANDROID_API_LEVEL}" \
+            "platform-tools" \
+            "build-tools;${ANDROID_BUILD_TOOLS}"
+
+      - name: Configure dedicated Plus release signing when repository secrets exist
+        id: signing
+        env:
+          M3U_RELEASE_KEYSTORE_BASE64: ${{ secrets.M3U_RELEASE_KEYSTORE_BASE64 }}
+          M3U_RELEASE_STORE_PASSWORD: ${{ secrets.M3U_RELEASE_STORE_PASSWORD }}
+          M3U_RELEASE_KEY_ALIAS: ${{ secrets.M3U_RELEASE_KEY_ALIAS }}
+          M3U_RELEASE_KEY_PASSWORD: ${{ secrets.M3U_RELEASE_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "$M3U_RELEASE_KEYSTORE_BASE64" && \
+                -n "$M3U_RELEASE_STORE_PASSWORD" && \
+                -n "$M3U_RELEASE_KEY_ALIAS" && \
+                -n "$M3U_RELEASE_KEY_PASSWORD" ]]; then
+            echo "$M3U_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/m3u-plus-release.jks"
+            test -s "$RUNNER_TEMP/m3u-plus-release.jks"
+            echo "M3U_RELEASE_KEYSTORE_PATH=$RUNNER_TEMP/m3u-plus-release.jks" >> "$GITHUB_ENV"
+            echo "M3U_RELEASE_STORE_PASSWORD=$M3U_RELEASE_STORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "M3U_RELEASE_KEY_ALIAS=$M3U_RELEASE_KEY_ALIAS" >> "$GITHUB_ENV"
+            echo "M3U_RELEASE_KEY_PASSWORD=$M3U_RELEASE_KEY_PASSWORD" >> "$GITHUB_ENV"
+            echo "build_kind=Release" >> "$GITHUB_OUTPUT"
+            echo "A dedicated Plus release key is configured."
+          else
+            echo "build_kind=Preview" >> "$GITHUB_OUTPUT"
+            echo "Release signing secrets are not yet configured; creating a debug-signed preview APK."
+          fi
+
+      - name: Build ARM64 release APK
+        if: steps.signing.outputs.build_kind == 'Release'
+        run: ./gradlew --no-daemon --stacktrace -Pm3uArm64=true :app:smartphone:assembleRelease
+
+      - name: Build ARM64 preview APK
+        if: steps.signing.outputs.build_kind == 'Preview'
+        run: ./gradlew --no-daemon --stacktrace -Pm3uArm64=true :app:smartphone:assembleDebug
+
+      - name: Verify independent package, ARM64 ABI and APK signature
+        env:
+          BUILD_KIND: ${{ steps.signing.outputs.build_kind }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=""
+          while IFS= read -r candidate; do
+            if unzip -l "$candidate" | grep -q 'lib/arm64-v8a/'; then
+              APK="$candidate"
+              break
+            fi
+          done < <(find app/smartphone/build/outputs -type f -name '*.apk' | sort)
+          test -n "$APK" || {
+            echo 'No APK containing ARM64 native libraries was produced.'
+            find app/smartphone/build/outputs -type f -name '*.apk' || true
+            exit 1
+          }
+          AAPT="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/aapt"
+          APKSIGNER="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/apksigner"
+          test -x "$AAPT"
+          test -x "$APKSIGNER"
+          "$AAPT" dump badging "$APK" > "$RUNNER_TEMP/badging.txt"
+          grep -F "package: name='com.m3u.smartphone.enhanced'" "$RUNNER_TEMP/badging.txt"
+          unzip -l "$APK" | grep 'lib/arm64-v8a/' | head -n 10
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          mkdir -p dist
+          cp "$APK" "dist/M3UAndroid-1.15.1-plus1-arm64-${BUILD_KIND,,}.apk"
+          sha256sum "dist/M3UAndroid-1.15.1-plus1-arm64-${BUILD_KIND,,}.apk" > dist/SHA256SUMS.txt
+          printf '%s\n' "$BUILD_KIND" > dist/BUILD_KIND.txt
+
+      - name: Upload verified ARM64 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: M3UAndroid-Plus-1.15.1-${{ steps.signing.outputs.build_kind }}-ARM64
+          path: |
+            dist/M3UAndroid-1.15.1-plus1-arm64-*.apk
+            dist/SHA256SUMS.txt
+            dist/BUILD_KIND.txt
+          if-no-files-found: error
+          retention-days: 30
