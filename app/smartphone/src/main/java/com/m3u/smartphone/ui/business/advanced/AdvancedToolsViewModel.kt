@@ -17,6 +17,8 @@ import com.m3u.data.repository.channel.ChannelRepository
 import com.m3u.data.repository.playlist.PlaylistRepository
 import com.m3u.data.repository.programme.ProgrammeRepository
 import com.m3u.data.worker.SubscriptionWorker
+import com.m3u.data.parser.xtream.XtreamInput
+import com.m3u.data.parser.xtream.XtreamParser
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
@@ -78,6 +80,12 @@ class AdvancedToolsViewModel @Inject constructor(
     val batchState: StateFlow<BatchState> = _batchState.asStateFlow()
     private var batchJob: Job? = null
 
+    private val _sourceDiagnostics = MutableStateFlow<Map<String, StreamDiagnosticResult>>(emptyMap())
+    val sourceDiagnostics: StateFlow<Map<String, StreamDiagnosticResult>> = _sourceDiagnostics.asStateFlow()
+
+    private val _sourceTestsRunning = MutableStateFlow<Set<String>>(emptySet())
+    val sourceTestsRunning: StateFlow<Set<String>> = _sourceTestsRunning.asStateFlow()
+
     fun searchChannels(query: String): Flow<PagingData<Channel>> {
         val normalized = query.trim()
         if (normalized.isBlank()) return flowOf(PagingData.empty<Channel>())
@@ -119,54 +127,111 @@ class AdvancedToolsViewModel @Inject constructor(
         }
     }
 
-    fun startBatchDiagnostics(playlistUrl: String, concurrency: Int = 2, limit: Int = 20) {
+    fun startBatchDiagnostics(playlistUrl: String, concurrency: Int = 3) {
         batchJob?.cancel()
         batchJob = viewModelScope.launch {
-            val safeConcurrency = concurrency.coerceIn(1, 3)
-            val safeLimit = limit.coerceIn(1, 20)
-            _batchState.value = BatchState(running = true, message = "Loading a small sample of channels…")
-            val channels = runCatching {
-                withContext(Dispatchers.IO) {
-                    channelRepository.getFirstByPlaylistUrl(playlistUrl, safeLimit)
-                }
+            val safeConcurrency = concurrency.coerceIn(1, 5)
+            _batchState.value = BatchState(running = true, message = "Counting every channel in this playlist…")
+            val playlist = runCatching { playlistRepository.get(playlistUrl) }.getOrNull()
+            val total = runCatching {
+                withContext(Dispatchers.IO) { channelRepository.getCountByPlaylistUrl(playlistUrl) }
             }.getOrElse {
-                _batchState.value = BatchState(message = "Could not read channels: ${it.message ?: "database error"}")
+                _batchState.value = BatchState(message = "Could not count playlist channels: database read failed.")
                 return@launch
             }
-            if (channels.isEmpty()) {
+            if (total == 0) {
                 _batchState.value = BatchState(message = "This playlist has no channels to test.")
                 return@launch
             }
-            _batchState.value = BatchState(total = channels.size, running = true, message = "Testing with $safeConcurrency small HTTP request(s) at a time…")
+
+            _batchState.value = BatchState(
+                total = total,
+                running = true,
+                message = "Testing all $total channels in bounded pages with $safeConcurrency concurrent checks…"
+            )
             val semaphore = Semaphore(safeConcurrency)
+            val pageSize = 100
+            var offset = 0
             try {
-                coroutineScope {
-                    channels.map { channel ->
-                        async(Dispatchers.IO) {
-                            semaphore.withPermit {
-                                delay(120)
-                                val result = StreamDiagnostics.probe(channel.url)
-                                _batchState.update { state ->
-                                    state.copy(
-                                        completed = state.completed + 1,
-                                        results = state.results + BatchItem(
-                                            channelId = channel.id,
-                                            title = channel.title,
-                                            category = channel.category,
-                                            result = result
-                                        )
+                while (offset < total) {
+                    val page = withContext(Dispatchers.IO) {
+                        channelRepository.getPageByPlaylistUrl(playlistUrl, pageSize, offset)
+                    }
+                    if (page.isEmpty()) break
+                    coroutineScope {
+                        page.map { channel ->
+                            async(Dispatchers.IO) {
+                                semaphore.withPermit {
+                                    val result = StreamDiagnostics.probe(
+                                        rawUrl = channel.url,
+                                        userAgent = playlist?.userAgent
                                     )
+                                    _batchState.update { state ->
+                                        state.copy(
+                                            completed = state.completed + 1,
+                                            results = state.results + BatchItem(
+                                                channelId = channel.id,
+                                                title = channel.title,
+                                                category = channel.category,
+                                                result = result
+                                            )
+                                        )
+                                    }
                                 }
                             }
-                        }
-                    }.awaitAll()
+                        }.awaitAll()
+                    }
+                    offset += page.size
                 }
-                _batchState.update { it.copy(running = false, message = "Completed ${it.completed} of ${it.total} connection checks. Preview a channel in the player to verify the actual picture.") }
+                _batchState.update { state ->
+                    state.copy(
+                        running = false,
+                        message = if (state.completed == total) {
+                            "Finished every channel: ${state.completed}/$total checked. ONLINE means the media endpoint (and one HLS segment when applicable) answered; it is not a decoder guarantee."
+                        } else {
+                            "The playlist changed during the test. ${state.completed} of $total channels were checked; run it again for the latest list."
+                        }
+                    )
+                }
             } catch (cancelled: CancellationException) {
-                _batchState.update { it.copy(running = false, message = "Batch check stopped.") }
+                _batchState.update { it.copy(running = false, message = "Test stopped after ${it.completed} of $total channels.") }
                 throw cancelled
             } catch (exception: Exception) {
-                _batchState.update { it.copy(running = false, message = "Batch check failed: ${exception.message ?: exception.javaClass.simpleName}") }
+                _batchState.update {
+                    it.copy(
+                        running = false,
+                        message = "Test interrupted after ${it.completed} of $total channels: ${exception.javaClass.simpleName}"
+                    )
+                }
+            }
+        }
+    }
+
+    fun testPlaylistSource(playlistUrl: String) {
+        if (playlistUrl in _sourceTestsRunning.value) return
+        _sourceTestsRunning.update { it + playlistUrl }
+        viewModelScope.launch {
+            try {
+                val playlist = withContext(Dispatchers.IO) { playlistRepository.get(playlistUrl) }
+                val probeUrl = if (playlist?.source == com.m3u.data.database.model.DataSource.Xtream) {
+                    runCatching {
+                        val input = XtreamInput.decodeFromPlaylistUrlOrNull(playlistUrl)
+                            ?: error("Invalid Xtream source URL")
+                        XtreamParser.createXmlUrl(
+                            basicUrl = input.basicUrl,
+                            username = input.username,
+                            password = input.password
+                        )
+                    }.getOrDefault(playlistUrl)
+                } else {
+                    playlistUrl
+                }
+                val result = withContext(Dispatchers.IO) {
+                    StreamDiagnostics.probe(probeUrl, playlist?.userAgent)
+                }
+                _sourceDiagnostics.update { it + (playlistUrl to result) }
+            } finally {
+                _sourceTestsRunning.update { it - playlistUrl }
             }
         }
     }
