@@ -260,6 +260,11 @@ private fun BulkGroupsPane(viewModel: AdvancedToolsViewModel) {
 @Composable
 private fun HomeLayoutPane(viewModel: AdvancedToolsViewModel) {
     val playlists by viewModel.playlists.collectAsStateWithLifecycle(initialValue = emptyMap())
+    val savedGroupOrder by viewModel.playlistOrder.collectAsStateWithLifecycle()
+    val liveGroupUrls = remember(playlists) { playlists.keys.map { it.url } }
+    val orderedGroupUrls = remember(liveGroupUrls, savedGroupOrder) {
+        savedGroupOrder.filter { it in liveGroupUrls } + liveGroupUrls.filterNot { it in savedGroupOrder }
+    }
     var selectedUrl by remember(playlists) {
         mutableStateOf(playlists.keys.firstOrNull()?.url.orEmpty())
     }
@@ -306,6 +311,50 @@ private fun HomeLayoutPane(viewModel: AdvancedToolsViewModel) {
             Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            item { Text("Home group order", style = MaterialTheme.typography.titleSmall) }
+            items(orderedGroupUrls, key = { "group-$it" }) { groupUrl ->
+                val group = playlists.keys.firstOrNull { it.url == groupUrl }
+                val count = group?.let { playlists[it] } ?: 0
+                Card(Modifier.fillMaxWidth()) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(group?.title ?: "Playlist")
+                            Text("$count channels", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Button(
+                            onClick = {
+                                val index = orderedGroupUrls.indexOf(groupUrl)
+                                if (index > 0) {
+                                    val updated = orderedGroupUrls.toMutableList()
+                                    val previous = updated[index - 1]
+                                    updated[index - 1] = groupUrl
+                                    updated[index] = previous
+                                    viewModel.reorderPlaylists(updated)
+                                }
+                            },
+                            enabled = orderedGroupUrls.indexOf(groupUrl) > 0
+                        ) { Text("↑") }
+                        Button(
+                            onClick = {
+                                val index = orderedGroupUrls.indexOf(groupUrl)
+                                if (index >= 0 && index < orderedGroupUrls.lastIndex) {
+                                    val updated = orderedGroupUrls.toMutableList()
+                                    val next = updated[index + 1]
+                                    updated[index + 1] = groupUrl
+                                    updated[index] = next
+                                    viewModel.reorderPlaylists(updated)
+                                }
+                            },
+                            enabled = orderedGroupUrls.indexOf(groupUrl) in 0 until orderedGroupUrls.lastIndex
+                        ) { Text("↓") }
+                    }
+                }
+            }
+            item { Text("Pinned categories", style = MaterialTheme.typography.titleSmall) }
             items(pinnedOrder, key = { "pinned-$it" }) { category ->
                 Card(Modifier.fillMaxWidth()) {
                     Row(
