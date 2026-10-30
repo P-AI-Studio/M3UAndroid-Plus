@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -51,6 +52,7 @@ import com.m3u.smartphone.ui.business.foryou.components.PlaylistGallery
 import com.m3u.smartphone.ui.business.foryou.components.recommend.RecommendGallery
 import com.m3u.smartphone.ui.common.helper.Action
 import com.m3u.smartphone.ui.common.helper.LocalHelper
+import com.m3u.smartphone.ui.business.advanced.PlaylistOrderStore
 import com.m3u.smartphone.ui.common.helper.Metadata
 import com.m3u.smartphone.ui.material.components.EpisodesBottomSheet
 import com.m3u.smartphone.ui.material.components.MediaSheet
@@ -81,6 +83,12 @@ fun ForyouRoute(
     val addContentDescription = stringResource(string.ui_action_add)
 
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val playlistOrderStore = remember(context) { PlaylistOrderStore(context) }
+    val savedPlaylistOrder by playlistOrderStore.order.collectAsStateWithLifecycle()
+    val orderedPlaylists = remember(playlists, savedPlaylistOrder) {
+        playlistOrderStore.orderPlaylists(playlists, savedPlaylistOrder)
+    }
     val specs by viewModel.specs.collectAsStateWithLifecycle()
     val episodes by viewModel.episodes.collectAsStateWithLifecycle()
 
@@ -107,7 +115,7 @@ fun ForyouRoute(
 
     Box(modifier) {
         ForyouScreen(
-            playlists = playlists,
+            playlists = orderedPlaylists,
             subscribingPlaylistUrls = subscribingPlaylistUrls,
             refreshingEpgUrls = refreshingEpgUrls,
             specs = specs,
