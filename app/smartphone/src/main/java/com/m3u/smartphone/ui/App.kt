@@ -40,6 +40,8 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.rounded.SettingsRemote
 import androidx.compose.material3.ExpandedFullScreenSearchBar
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
@@ -481,6 +483,14 @@ private fun AppContent(
 ) {
     val helper = LocalHelper.current
     val coroutineScope = rememberCoroutineScope()
+    var searchActionsExpanded by remember { mutableStateOf(false) }
+    val openPlusTool: (String) -> Unit = { tab ->
+        searchActionsExpanded = false
+        coroutineScope.launch { searchBarState.animateToCollapsed() }
+        navController.navigate("${Destination.Advanced.name}?tab=$tab") {
+            launchSingleTop = true
+        }
+    }
     val contextualTitleStyle = if (LocalThemeStyle.current == ThemeStyle.WARM_EDITORIAL) {
         MaterialTheme.typography.titleLarge.withEditorialVoice()
     } else {
@@ -513,7 +523,39 @@ private fun AppContent(
                 }
             },
             trailingIcon = {
-                Icon(Icons.Default.MoreVert, contentDescription = null)
+                Box {
+                    IconButton(onClick = { searchActionsExpanded = true }) {
+                        Icon(
+                            Icons.Default.MoreVert,
+                            contentDescription = "Open home actions"
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = searchActionsExpanded,
+                        onDismissRequest = { searchActionsExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Add new group") },
+                            onClick = { openPlusTool("BULK_GROUPS") }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Manage groups") },
+                            onClick = { openPlusTool("SERVICES") }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Test all channel connections") },
+                            onClick = { openPlusTool("DIAGNOSTICS") }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Home layout and category order") },
+                            onClick = { openPlusTool("LAYOUT") }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Global search and EPG tools") },
+                            onClick = { openPlusTool("SEARCH") }
+                        )
+                    }
+                }
             },
         )
     }
