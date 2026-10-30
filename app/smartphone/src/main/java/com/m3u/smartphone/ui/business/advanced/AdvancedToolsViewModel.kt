@@ -127,6 +127,43 @@ class AdvancedToolsViewModel @Inject constructor(
         }
     }
 
+    fun importBulkPlaylists(rawLinks: String) {
+        viewModelScope.launch {
+            val parsed = BulkPlaylistBuilder.parse(rawLinks)
+            if (parsed.error != null) {
+                _operationMessage.value = parsed.error
+                return@launch
+            }
+            var queued = 0
+            var failed = 0
+            parsed.urls.forEachIndexed { index, url ->
+                val title = BulkPlaylistBuilder.groupTitle(index)
+                val result = runCatching {
+                    val xtream = XtreamInput.decodeFromPlaylistUrlOrNull(url)
+                    if (xtream != null) {
+                        SubscriptionWorker.xtream(
+                            workManager = workManager,
+                            title = title,
+                            url = url,
+                            basicUrl = xtream.basicUrl,
+                            username = xtream.username,
+                            password = xtream.password
+                        )
+                    } else {
+                        SubscriptionWorker.m3u(workManager, title, url)
+                    }
+                }
+                if (result.isSuccess) queued++ else failed++
+            }
+            _operationMessage.value = buildString {
+                append("Queued $queued independent numbered groups.")
+                if (parsed.invalidCount > 0) append(" Skipped ${parsed.invalidCount} invalid lines.")
+                if (parsed.duplicateCount > 0) append(" Removed ${parsed.duplicateCount} duplicate links.")
+                if (failed > 0) append(" Failed to queue $failed groups.")
+            }
+        }
+    }
+
     fun startBatchDiagnostics(playlistUrl: String, concurrency: Int = 3) {
         batchJob?.cancel()
         batchJob = viewModelScope.launch {
