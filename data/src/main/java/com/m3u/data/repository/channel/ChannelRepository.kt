@@ -30,6 +30,8 @@ interface ChannelRepository {
 
     suspend fun getByPlaylistUrl(playlistUrl: String): List<Channel>
     suspend fun getFirstByPlaylistUrl(playlistUrl: String, limit: Int): List<Channel>
+    suspend fun getPageByPlaylistUrl(playlistUrl: String, limit: Int, offset: Int): List<Channel>
+    suspend fun getCountByPlaylistUrl(playlistUrl: String): Int
     suspend fun getByRelationIds(relationIds: List<String>): List<Channel>
     suspend fun favouriteOrUnfavourite(id: Int)
     suspend fun hide(id: Int, target: Boolean)
