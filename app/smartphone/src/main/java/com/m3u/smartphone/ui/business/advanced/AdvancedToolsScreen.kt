@@ -21,6 +21,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,20 +44,25 @@ import java.util.Locale
 
 private enum class AdvancedTab(val label: String) {
     SEARCH("Global search"),
-    BULK("Bulk links"),
+    BULK("Bulk channels"),
+    BULK_GROUPS("Bulk groups"),
+    LAYOUT("Home layout"),
     EPG("EPG guide"),
-    DIAGNOSTICS("Batch test"),
+    DIAGNOSTICS("Connection test"),
     PARENTAL("Parental PIN"),
-    SERVICES("Services")
+    SERVICES("Groups")
 }
 
 @Composable
 internal fun AdvancedToolsRoute(
     navigateToChannel: () -> Unit,
     modifier: Modifier = Modifier,
+    initialTab: String = "SEARCH",
     viewModel: AdvancedToolsViewModel = hiltViewModel()
 ) {
-    var selectedTab by remember { mutableStateOf(AdvancedTab.SEARCH) }
+    var selectedTab by remember(initialTab) {
+        mutableStateOf(AdvancedTab.entries.firstOrNull { it.name == initialTab } ?: AdvancedTab.SEARCH)
+    }
     Column(modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 8.dp)) {
         Text("Advanced tools", style = MaterialTheme.typography.headlineSmall)
         Text(
@@ -76,6 +82,8 @@ internal fun AdvancedToolsRoute(
         when (selectedTab) {
             AdvancedTab.SEARCH -> GlobalSearchPane(viewModel, navigateToChannel)
             AdvancedTab.BULK -> BulkLinksPane(viewModel)
+            AdvancedTab.BULK_GROUPS -> BulkGroupsPane(viewModel)
+            AdvancedTab.LAYOUT -> HomeLayoutPane(viewModel)
             AdvancedTab.EPG -> EpgPane(viewModel)
             AdvancedTab.DIAGNOSTICS -> DiagnosticsPane(viewModel, navigateToChannel)
             AdvancedTab.PARENTAL -> ParentalPane()
@@ -203,6 +211,168 @@ private fun safeDisplayUrl(raw: String): String = runCatching {
 }.getOrDefault("URL hidden")
 
 @Composable
+private fun BulkGroupsPane(viewModel: AdvancedToolsViewModel) {
+    var rawLinks by remember { mutableStateOf("") }
+    val message by viewModel.operationMessage.collectAsStateWithLifecycle()
+    val parsed = remember(rawLinks) { BulkPlaylistBuilder.parse(rawLinks) }
+
+    Column(
+        Modifier.fillMaxSize().padding(top = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            "One complete playlist URL per line. Every line becomes a separate group with its own channels.",
+            style = MaterialTheme.typography.bodySmall
+        )
+        OutlinedTextField(
+            value = rawLinks,
+            onValueChange = { rawLinks = it },
+            label = { Text("Paste up to 100 playlist links") },
+            minLines = 5,
+            maxLines = 9,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Text(
+            "Groups: ${parsed.urls.size} · Duplicates: ${parsed.duplicateCount} · Invalid lines: ${parsed.invalidCount}",
+            style = MaterialTheme.typography.bodySmall
+        )
+        parsed.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        Button(
+            onClick = { viewModel.importBulkPlaylists(rawLinks) },
+            enabled = parsed.urls.isNotEmpty() && parsed.error == null,
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Import ${parsed.urls.size} separate groups") }
+        message?.let { Text(it, color = MaterialTheme.colorScheme.secondary) }
+        Text("Preview", style = MaterialTheme.typography.titleSmall)
+        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            items(parsed.urls.withIndex().toList()) { indexed ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(10.dp)) {
+                        Text(BulkPlaylistBuilder.groupTitle(indexed.index), style = MaterialTheme.typography.titleSmall)
+                        Text(BulkPlaylistBuilder.safeDisplayUrl(indexed.value), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeLayoutPane(viewModel: AdvancedToolsViewModel) {
+    val playlists by viewModel.playlists.collectAsStateWithLifecycle(initialValue = emptyMap())
+    var selectedUrl by remember(playlists) {
+        mutableStateOf(playlists.keys.firstOrNull()?.url.orEmpty())
+    }
+    var menuExpanded by remember { mutableStateOf(false) }
+    val selected = playlists.keys.firstOrNull { it.url == selectedUrl }
+    val categories by remember(selectedUrl) {
+        viewModel.categoriesForPlaylist(selectedUrl)
+    }.collectAsStateWithLifecycle(initialValue = emptyList())
+    var pinnedOrder by remember(selectedUrl) {
+        mutableStateOf(selected?.pinnedCategories.orEmpty())
+    }
+
+    LaunchedEffect(selectedUrl, selected?.pinnedCategories, categories) {
+        pinnedOrder = selected?.pinnedCategories.orEmpty().filter { it in categories }
+    }
+
+    Column(
+        Modifier.fillMaxSize().padding(top = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            "Choose which categories appear first on the home screen. Pinned categories follow the order below.",
+            style = MaterialTheme.typography.bodySmall
+        )
+        Button(onClick = { menuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+            Text(selected?.title ?: "Choose a group")
+        }
+        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+            playlists.forEach { (playlist, count) ->
+                DropdownMenuItem(
+                    text = { Text("${playlist.title} ($count)") },
+                    onClick = {
+                        selectedUrl = playlist.url
+                        menuExpanded = false
+                    }
+                )
+            }
+        }
+        Text("Pinned categories", style = MaterialTheme.typography.titleSmall)
+        if (pinnedOrder.isEmpty()) {
+            Text("No pinned categories yet. Pin one from the list below.", style = MaterialTheme.typography.bodySmall)
+        }
+        LazyColumn(
+            Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            items(pinnedOrder, key = { "pinned-$it" }) { category ->
+                Card(Modifier.fillMaxWidth()) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        Text(category, modifier = Modifier.weight(1f))
+                        Button(
+                            onClick = {
+                                val index = pinnedOrder.indexOf(category)
+                                if (index > 0) {
+                                    val updated = pinnedOrder.toMutableList()
+                                    val previous = updated[index - 1]
+                                    updated[index - 1] = category
+                                    updated[index] = previous
+                                    pinnedOrder = updated
+                                    viewModel.setPinnedCategories(selectedUrl, updated)
+                                }
+                            },
+                            enabled = pinnedOrder.indexOf(category) > 0
+                        ) { Text("↑") }
+                        Button(
+                            onClick = {
+                                val index = pinnedOrder.indexOf(category)
+                                if (index >= 0 && index < pinnedOrder.lastIndex) {
+                                    val updated = pinnedOrder.toMutableList()
+                                    val next = updated[index + 1]
+                                    updated[index + 1] = category
+                                    updated[index] = next
+                                    pinnedOrder = updated
+                                    viewModel.setPinnedCategories(selectedUrl, updated)
+                                }
+                            },
+                            enabled = pinnedOrder.indexOf(category) in 0 until pinnedOrder.lastIndex
+                        ) { Text("↓") }
+                        Button(onClick = {
+                            val updated = pinnedOrder - category
+                            pinnedOrder = updated
+                            viewModel.setPinnedCategories(selectedUrl, updated)
+                        }) { Text("Unpin") }
+                    }
+                }
+            }
+            item { Text("All categories", style = MaterialTheme.typography.titleSmall) }
+            items(categories.filterNot { it in pinnedOrder }, key = { "available-$it" }) { category ->
+                Card(Modifier.fillMaxWidth()) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        Text(category, modifier = Modifier.weight(1f))
+                        Button(onClick = {
+                            val updated = pinnedOrder + category
+                            pinnedOrder = updated
+                            viewModel.setPinnedCategories(selectedUrl, updated)
+                        }) { Text("Pin to top") }
+                    }
+                }
+            }
+        }
+        Text("Unpinned categories keep their normal order.", style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
 private fun EpgPane(viewModel: AdvancedToolsViewModel) {
     val epgs by viewModel.epgPlaylists.collectAsStateWithLifecycle(initialValue = emptyList())
     var epgUrl by remember(epgs) { mutableStateOf(epgs.firstOrNull()?.url.orEmpty()) }
@@ -264,7 +434,7 @@ private fun DiagnosticsPane(
     val selectedPlaylist = playlists.entries.firstOrNull { it.key.url == selectedUrl }
 
     Column(Modifier.fillMaxSize().padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Batch-check up to 20 channels from one playlist. The default uses only 2 small HTTP probes at once.", style = MaterialTheme.typography.bodySmall)
+        Text("Checks every channel in the selected playlist. Channels are loaded in small pages to keep memory use stable.", style = MaterialTheme.typography.bodySmall)
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(selectedPlaylist?.key?.title ?: "Choose a playlist", style = MaterialTheme.typography.titleSmall)
@@ -278,16 +448,16 @@ private fun DiagnosticsPane(
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    (1..3).forEach { amount ->
+                    (1..5).forEach { amount ->
                         Button(onClick = { concurrency = amount }, enabled = concurrency != amount) { Text("$amount") }
                     }
                 }
-                Text("Concurrent network checks: $concurrency (maximum 3). Only the first 20 channels are checked per run.", style = MaterialTheme.typography.bodySmall)
+                Text("Concurrent checks: $concurrency (maximum 5). Every channel is included.", style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
-                        onClick = { viewModel.startBatchDiagnostics(selectedUrl, concurrency, 20) },
+                        onClick = { viewModel.startBatchDiagnostics(selectedUrl, concurrency) },
                         enabled = selectedUrl.isNotBlank() && !batch.running
-                    ) { Text(if (batch.running) "Testing…" else "Test first 20 channels") }
+                    ) { Text(if (batch.running) "Testing…" else "Test all channels") }
                     if (batch.running) {
                         Button(onClick = viewModel::cancelBatchDiagnostics) { Text("Stop") }
                     }
@@ -295,20 +465,31 @@ private fun DiagnosticsPane(
             }
         }
         if (batch.total > 0) {
-            Text("Progress: ${batch.completed}/${batch.total}", style = MaterialTheme.typography.labelLarge)
+            val percent = if (batch.total == 0) 0 else (batch.completed * 100 / batch.total)
+            Text(
+                "Progress: ${batch.completed}/${batch.total} · $percent%",
+                style = MaterialTheme.typography.labelLarge
+            )
+            androidx.compose.material3.LinearProgressIndicator(
+                progress = { if (batch.total == 0) 0f else batch.completed.toFloat() / batch.total },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(
+                "Online: ${batch.online} · Offline: ${batch.offline} · Restricted: ${batch.restricted} · Check manually: ${batch.inconclusive}",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
         batch.message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary) }
         Text("Results · data reachability is not the same as successful video decoding", style = MaterialTheme.typography.titleSmall)
         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             items(batch.results, key = { it.channelId }) { item ->
-                val success = item.result.statusCode in 200..299 && item.result.firstByteReceived
+                val success = item.result.outcome == StreamProbeOutcome.ONLINE
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(item.title, style = MaterialTheme.typography.titleSmall)
                         Text(item.category, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(
-                            if (success) "Responded · HTTP ${item.result.statusCode} · ${item.result.elapsedMs} ms · first byte received"
-                            else "Not confirmed · HTTP ${item.result.statusCode ?: "—"} · ${item.result.elapsedMs} ms · ${item.result.error ?: "no media byte"}",
+                            "${item.result.outcome.name} · HTTP ${item.result.statusCode ?: "—"} · ${item.result.elapsedMs} ms · ${item.result.error ?: if (item.result.validatedSegment) "HLS segment verified" else "Media endpoint answered"}",
                             color = if (success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -324,7 +505,7 @@ private fun DiagnosticsPane(
             }
         }
         Text(
-            "Low-impact mode: one byte maximum per HTTP response, 2.5-second timeouts, at most 3 connections, no parallel video decoders. Use the Player button to verify that the image actually appears; this connection test alone cannot prove decoding.",
+            "The test follows redirects, uses the playlist User-Agent, and for HLS verifies a media segment. It does not start video decoders; use Open in player to confirm actual picture and sound.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -385,6 +566,8 @@ private fun ParentalPane() {
 private fun ServicesPane(viewModel: AdvancedToolsViewModel) {
     val playlists by viewModel.playlists.collectAsStateWithLifecycle(initialValue = emptyMap())
     val message by viewModel.operationMessage.collectAsStateWithLifecycle()
+    val sourceResults by viewModel.sourceDiagnostics.collectAsStateWithLifecycle()
+    val sourceRunning by viewModel.sourceTestsRunning.collectAsStateWithLifecycle()
     var pendingRemoval by remember { mutableStateOf<com.m3u.data.database.model.Playlist?>(null) }
     if (pendingRemoval != null) {
         val selected = pendingRemoval!!
@@ -416,8 +599,24 @@ private fun ServicesPane(viewModel: AdvancedToolsViewModel) {
                         Text("${playlist.source.value.uppercase()} · $channelCount channels", style = MaterialTheme.typography.bodySmall)
                         Text("EPG sources: ${playlist.epgUrls.size}", style = MaterialTheme.typography.bodySmall)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = { viewModel.testPlaylistSource(playlist.url) },
+                                enabled = playlist.url !in sourceRunning
+                            ) { Text(if (playlist.url in sourceRunning) "Testing…" else "Test connection") }
                             Button(onClick = { viewModel.refreshPlaylist(playlist.url) }) { Text("Refresh") }
                             Button(onClick = { pendingRemoval = playlist }) { Text("Remove") }
+                        }
+                        sourceResults[playlist.url]?.let { result ->
+                            Text(
+                                "${result.outcome.name} · HTTP ${result.statusCode ?: "—"} · ${result.elapsedMs} ms${result.error?.let { " · $it" } ?: ""}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = when (result.outcome) {
+                                    StreamProbeOutcome.ONLINE -> MaterialTheme.colorScheme.primary
+                                    StreamProbeOutcome.OFFLINE -> MaterialTheme.colorScheme.error
+                                    StreamProbeOutcome.RESTRICTED -> MaterialTheme.colorScheme.tertiary
+                                    StreamProbeOutcome.INCONCLUSIVE -> MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
                         }
                     }
                 }
