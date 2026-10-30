@@ -34,6 +34,12 @@ jobs:
           if (!(Test-Path "desktop/windows/publish/M3UAndroidPlus.Windows.exe")) {
             throw "Windows executable was not produced."
           }
+          # This artifact targets x64 only; remove unused LibVLC runtimes to avoid
+          # shipping ARM64/x86 binaries and needlessly inflating the download.
+          foreach ($arch in @("win-arm64", "win-x86", "win-x86-64")) {
+            $unused = Join-Path "desktop/windows/publish/libvlc" $arch
+            if (Test-Path $unused) { Remove-Item $unused -Recurse -Force }
+          }
           New-Item -ItemType Directory -Force -Path "dist" | Out-Null
           $zip = "dist/M3UAndroidPlus-Windows-x64.zip"
           Compress-Archive -Path "desktop/windows/publish/*" -DestinationPath $zip -Force
