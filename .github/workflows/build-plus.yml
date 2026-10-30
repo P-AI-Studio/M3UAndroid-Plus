@@ -21,8 +21,8 @@ permissions:
 
 env:
   JAVA_VERSION: '17'
-  ANDROID_API_LEVEL: '37'
-  ANDROID_BUILD_TOOLS: '36.0.0'
+  ANDROID_API_LEVEL: '37.0'
+  ANDROID_BUILD_TOOLS: '37.0.0'
 
 jobs:
   build-arm64:
@@ -58,11 +58,19 @@ jobs:
         with:
           packages: platform-tools
 
-      - name: Install Android SDK platform and build tools
+      - name: Install Android 17 preview platform and build tools
+        shell: bash
         run: |
-          sdkmanager "platforms;android-${ANDROID_API_LEVEL}" \
+          set -euo pipefail
+          sdkmanager --channel=1 \
+            "platforms;android-${ANDROID_API_LEVEL}" \
             "platform-tools" \
             "build-tools;${ANDROID_BUILD_TOOLS}"
+          test -d "$ANDROID_HOME/platforms/android-37.0"
+          if [[ ! -e "$ANDROID_HOME/platforms/android-37" ]]; then
+            ln -s android-37.0 "$ANDROID_HOME/platforms/android-37"
+          fi
+          test -f "$ANDROID_HOME/platforms/android-37/android.jar"
 
       - name: Configure dedicated Plus release signing when repository secrets exist
         id: signing
