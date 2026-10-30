@@ -466,7 +466,7 @@ internal sealed class MainForm : Form
         {
             await Parallel.ForEachAsync(channels, new ParallelOptions
             {
-                MaxDegreeOfParallelism = 3,
+                MaxDegreeOfParallelism = 1,
                 CancellationToken = token
             }, async (channel, cancellation) =>
             {

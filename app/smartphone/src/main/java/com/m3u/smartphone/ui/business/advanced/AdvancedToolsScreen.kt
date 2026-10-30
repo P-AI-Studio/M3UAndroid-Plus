@@ -565,7 +565,7 @@ private fun DiagnosticsPane(
     val scope = rememberCoroutineScope()
     var selectedUrl by remember(playlists) { mutableStateOf(playlists.keys.firstOrNull()?.url.orEmpty()) }
     var selectorExpanded by remember { mutableStateOf(false) }
-    var concurrency by remember { mutableStateOf(3) }
+    var concurrency by remember { mutableStateOf(1) }
     val selectedPlaylist = playlists.entries.firstOrNull { it.key.url == selectedUrl }
 
     Column(Modifier.fillMaxSize().padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -587,7 +587,7 @@ private fun DiagnosticsPane(
                         Button(onClick = { concurrency = amount }, enabled = concurrency != amount) { Text("$amount") }
                     }
                 }
-                Text("Concurrent checks: $concurrency (maximum 5). Every channel is included.", style = MaterialTheme.typography.bodySmall)
+                Text("Concurrent checks: $concurrency (maximum 5). Default 1 avoids provider session limits; increase only when your provider allows it.", style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = { viewModel.startBatchDiagnostics(selectedUrl, concurrency) },
@@ -768,7 +768,7 @@ private fun ServicesPane(viewModel: AdvancedToolsViewModel) {
                                 enabled = playlist.url !in sourceRunning
                             ) { Text(if (playlist.url in sourceRunning) "Testing link…" else "Test link") }
                             Button(
-                                onClick = { viewModel.startBatchDiagnostics(playlist.url, concurrency = 3) },
+                                onClick = { viewModel.startBatchDiagnostics(playlist.url, concurrency = 1) },
                                 enabled = !batch.running
                             ) {
                                 Text(if (batch.running) "Another test is running…" else "Test all channels")

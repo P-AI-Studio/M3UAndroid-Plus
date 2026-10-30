@@ -5,7 +5,7 @@ Target repository: `P-AI-Studio/M3UAndroid-Plus`, branch `plus-implementation`. 
 ## Android app identity
 
 - Application ID: `com.m3u.smartphone.enhanced`
-- Version: `1.15.3-plus3`
+- Version: `1.15.4-plus4`
 - Version code: `148`
 - Minimum Android: 8.0 (API 26)
 - Target Android: 16 (API 36)
