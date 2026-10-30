@@ -293,7 +293,7 @@ class AdvancedToolsViewModel @Inject constructor(
                     runCatching {
                         val input = XtreamInput.decodeFromPlaylistUrlOrNull(playlistUrl)
                             ?: error("Invalid Xtream source URL")
-                        XtreamParser.createXmlUrl(
+                        XtreamParser.createInfoUrl(
                             basicUrl = input.basicUrl,
                             username = input.username,
                             password = input.password
