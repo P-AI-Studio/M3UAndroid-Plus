@@ -128,6 +128,21 @@ object StreamDiagnostics {
             val looksLikeHtml = contentType?.contains("text/html", ignoreCase = true) == true ||
                 initial.bodyText().trimStart().startsWith("<!doctype html", ignoreCase = true) ||
                 initial.bodyText().trimStart().startsWith("<html", ignoreCase = true)
+            val bodyPreview = initial.bodyText().trimStart()
+            val looksLikeStructuredError = contentType?.let {
+                it.contains("json", ignoreCase = true) ||
+                    it.contains("xml", ignoreCase = true)
+            } == true || bodyPreview.startsWith("{") || bodyPreview.startsWith("[") ||
+                bodyPreview.startsWith("<?xml", ignoreCase = true)
+            if (looksLikeStructuredError) {
+                return StreamDiagnosticResult(
+                    endpoint, initial.statusCode, elapsedMs(started), contentType, initial.contentLength,
+                    initial.rangeSupported, true, initial.redirected,
+                    "The server returned structured text rather than a confirmed media stream.",
+                    StreamProbeOutcome.INCONCLUSIVE, false, finalEndpoint
+                )
+            }
+
             if (looksLikeHtml) {
                 return StreamDiagnosticResult(
                     endpoint, initial.statusCode, elapsedMs(started), contentType, initial.contentLength,
