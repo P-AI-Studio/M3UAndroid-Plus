@@ -1,27 +1,28 @@
 # M3UAndroid Plus — Windows companion
 
-This is a separate Windows desktop companion, not a direct port of the Android application. The Android code depends on Android-only APIs (Room, WorkManager, Media3, Hilt and Android activities); the Windows version uses WinForms and LibVLCSharp.
+This is a separate Windows desktop companion, not a direct binary port of the Android application. The Android code depends on Android-only APIs (Room, WorkManager, Media3, Hilt and Android activities); the Windows version uses WinForms and LibVLCSharp.
 
-## Capabilities
+## Current capabilities
 
-- Add M3U playlist URLs as independent numbered groups.
-- Paste up to 100 playlist URLs (one URL per line) and import each as its own group.
-- Search channels in the selected group.
-- Test all channels in the selected group with bounded parallel requests and HLS first-segment validation.
-- Refresh, remove, reorder and alphabetically sort groups.
-- Play the selected stream with LibVLC.
-- Store playlists locally under `%LOCALAPPDATA%\M3UAndroidPlusWindows`.
+- Add M3U playlist URLs as independent groups.
+- Paste up to 100 complete playlist URLs (one per line) and import each URL as its own numbered group.
+- Search channels within the selected group.
+- Test every channel in a selected group with a progress bar, a percentage and Online / Offline / Restricted / Check manually counts.
+- Use bounded parallel requests (three at a time), a low-rate retry for inconclusive results, redirect handling, playlist User-Agent support, and HLS first-media-segment validation.
+- Refresh, remove, move and alphabetically sort groups.
+- Play a selected stream with LibVLC.
+- Store groups locally under `%LOCALAPPDATA%\M3UAndroidPlusWindows`.
 
-## Build
+## Build and download
 
-Open `M3UAndroidPlus.Windows.csproj` in Visual Studio 2026 or run:
+GitHub Actions publishes a self-contained Windows x64 ZIP. Extract the ZIP and run `M3UAndroidPlus.Windows.exe`. No separate .NET installation should be required.
+
+For a local build:
 
 ```powershell
 dotnet publish .\M3UAndroidPlus.Windows.csproj -c Release -r win-x64 --self-contained true
 ```
 
-The GitHub Actions workflow publishes a self-contained Windows x64 folder as a ZIP artifact.
+## Compatibility boundary
 
-## Limits
-
-The first Windows release reads M3U playlist URLs (including common Xtream get.php M3U exports). It does not yet implement the Android app's plugin system, full Xtream API browsing, DRM, EPG synchronization or provider account workflows. HTTP availability is not proof that a video decoder can play a stream. VLC playback is the final validation.
+The Windows version supports M3U playlist URLs, including common Xtream `get.php` M3U exports. It does not yet implement the Android app's extension/plugin system, full Xtream API browsing, DRM, EPG synchronization or provider account workflows. Stream tests are protocol/media-signature checks, not an actual VLC decode. VLC playback is the final validation.

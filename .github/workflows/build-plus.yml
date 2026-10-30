@@ -41,7 +41,7 @@ jobs:
           test -f app/smartphone/src/main/java/com/m3u/smartphone/ui/business/advanced/AdvancedToolsScreen.kt
           grep -F 'applicationId = "com.m3u.smartphone.enhanced"' app/smartphone/build.gradle.kts
           grep -F 'targetSdk = 36' app/smartphone/build.gradle.kts
-          grep -F 'versionName = "1.15.2-plus2"' app/smartphone/build.gradle.kts
+          grep -F 'versionName = "1.15.3-plus3"' app/smartphone/build.gradle.kts
           python3 -m unittest discover -s m3u_enhancement_pack/tests -v
 
       - name: Set up JDK 17
@@ -143,22 +143,22 @@ jobs:
           unzip -l "$APK" | grep 'lib/arm64-v8a/' | head -n 10
 
           mkdir -p dist
-          cp "$APK" "dist/M3UAndroid-1.15.2-plus2-arm64-${BUILD_KIND,,}.apk"
+          cp "$APK" "dist/M3UAndroid-1.15.3-plus3-arm64-${BUILD_KIND,,}.apk"
           if [[ "$BUILD_KIND" == "Release" ]]; then
             AAB="app/smartphone/build/outputs/bundle/release/app-smartphone-release.aab"
             test -s "$AAB" || { echo 'Release AAB was not produced'; exit 1; }
             jarsigner -verify "$AAB"
-            cp "$AAB" "dist/M3UAndroid-1.15.2-plus2-arm64-release.aab"
-            sha256sum "dist/M3UAndroid-1.15.2-plus2-arm64-release.apk" "dist/M3UAndroid-1.15.2-plus2-arm64-release.aab" > dist/SHA256SUMS.txt
+            cp "$AAB" "dist/M3UAndroid-1.15.3-plus3-arm64-release.aab"
+            sha256sum "dist/M3UAndroid-1.15.3-plus3-arm64-release.apk" "dist/M3UAndroid-1.15.3-plus3-arm64-release.aab" > dist/SHA256SUMS.txt
           else
-            sha256sum "dist/M3UAndroid-1.15.2-plus2-arm64-releasepreview.apk" > dist/SHA256SUMS.txt
+            sha256sum "dist/M3UAndroid-1.15.3-plus3-arm64-releasepreview.apk" > dist/SHA256SUMS.txt
           fi
           printf '%s\n' "$BUILD_KIND" > dist/BUILD_KIND.txt
 
       - name: Upload verified Android package
         uses: actions/upload-artifact@v4
         with:
-          name: M3UAndroid-Plus-1.15.2-${{ steps.signing.outputs.build_kind }}-ARM64
+          name: M3UAndroid-Plus-1.15.3-${{ steps.signing.outputs.build_kind }}-ARM64
           path: dist/
           if-no-files-found: error
           retention-days: 30

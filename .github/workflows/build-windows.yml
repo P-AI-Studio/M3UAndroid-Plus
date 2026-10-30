@@ -34,15 +34,16 @@ jobs:
           if (!(Test-Path "desktop/windows/publish/M3UAndroidPlus.Windows.exe")) {
             throw "Windows executable was not produced."
           }
-          $zip = "desktop/windows/publish/M3UAndroidPlus-Windows-x64.zip"
+          New-Item -ItemType Directory -Force -Path "dist" | Out-Null
+          $zip = "dist/M3UAndroidPlus-Windows-x64.zip"
           Compress-Archive -Path "desktop/windows/publish/*" -DestinationPath $zip -Force
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-          "$hash  M3UAndroidPlus-Windows-x64.zip" | Out-File "desktop/windows/publish/SHA256SUMS.txt" -Encoding ascii
+          "$hash  M3UAndroidPlus-Windows-x64.zip" | Out-File "dist/SHA256SUMS.txt" -Encoding ascii
 
       - name: Upload Windows x64 package
         uses: actions/upload-artifact@v4
         with:
           name: M3UAndroid-Plus-Windows-x64
-          path: desktop/windows/publish/**
+          path: dist/**
           if-no-files-found: error
           retention-days: 30

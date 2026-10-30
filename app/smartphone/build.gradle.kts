@@ -38,8 +38,8 @@ android {
         applicationId = "com.m3u.smartphone.enhanced"
         minSdk = 26
         targetSdk = 36
-        versionCode = 147
-        versionName = "1.15.2-plus2"
+        versionCode = 148
+        versionName = "1.15.3-plus3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         testInstrumentationRunnerArguments["m3uMockServerUrl"] = m3uMockServerUrl.get()

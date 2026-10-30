@@ -1,24 +1,19 @@
 # M3UAndroid Plus — test report
 
-## Host-side checks completed
+## Implemented validation paths
 
-- `python -m py_compile apply.py`: passed.
-- `python -m unittest discover -s tests -v`: passed against a minimal source fixture with version/package guards.
-- `BulkM3uBuilder.kt` plus its smoke test: compiled and passed.
-- `StreamDiagnostics.kt` plus its smoke test: compiled and passed against a local HTTP range server. The test covers HTTP 206/one-byte response, non-HTTP scheme rejection and sensitive URL redaction.
+- Python patch-application tests run in Android CI.
+- Android Gradle Release APK compilation runs on GitHub Actions.
+- Android verification checks the distinct package ID, target SDK 36, ARM64 native libraries and APK signature.
+- Windows CI runs `dotnet publish` for self-contained `win-x64` and uploads a ZIP plus SHA-256 checksum.
+- Stream diagnostic logic classifies only explicit HTTP 404/410 responses as Offline; authentication/rate-limit responses are Restricted; transient/server/network/unknown media responses are Inconclusive and retried once.
+- Batch channel tests use paged database reads and a bounded concurrency setting; progress and result counters are published per page.
 
-## Compatibility updates for upstream 1.15.1
+## Not covered by CI
 
-- EPG paging uses the current `ProgrammeRepository.pagingProgrammes()` Flow<PagingData<Programme>> contract directly.
-- The batch test uses a new Room query limited to at most 20 rows, then exposes it through the current ChannelRepository interface.
-- Playlist services consume the current `observeAllCounts(): Flow<Map<Playlist, Int>>` contract.
-- ARM64-only packaging is enabled with the Gradle property `-Pm3uArm64=true` rather than relying on a nonexistent build variant name.
+- Install/update on a physical Android phone or tablet.
+- Play Console acceptance, upload certificate registration, store listing and policy review.
+- Actual video/audio/subtitle decode for every channel. HTTP and HLS media probes do not replace a real player decode.
+- Windows VLC playback against the user's private provider credentials and streams.
 
-## Not yet verified
-
-- Full Android/Compose/Room Gradle build.
-- GitHub Actions CI run.
-- APK install/update on a physical Android device.
-- Live IPTV decoder, audio, subtitles and EPG synchronization behavior.
-
-The Parental PIN is explicitly limited to Advanced global-search category filtering; it does not intercept all player entry paths.
+A successful build is not evidence that an individual IPTV provider allows access or that Google Play has approved the app.

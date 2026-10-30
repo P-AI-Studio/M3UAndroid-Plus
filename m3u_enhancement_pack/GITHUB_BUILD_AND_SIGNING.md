@@ -1,25 +1,40 @@
-# M3UAndroid Plus — GitHub Actions build and signing
+# M3UAndroid Plus — GitHub build and Google Play signing
 
-Target repository: `P-AI-Studio/M3UAndroid-Plus`. The owner chose to keep this repository **Public**. Only source, workflow and tests are committed; the private signing key and passwords are not stored in Git.
+Target repository: `P-AI-Studio/M3UAndroid-Plus`, branch `plus-implementation`. The repository remains **Public**; the original `master` branch and original app package are not modified.
 
-## Two build modes
+## Android app identity
 
-- **Preview APK:** if no release-key secrets are configured, GitHub Actions builds an ARM64 debug-signed preview. It is suitable for installing and checking the new app. The hosted runner's debug key is not the stable Plus release key, so a later release-signed APK may require uninstalling this preview before installing the signed release.
-- **Release APK:** once the four repository secrets below are configured, GitHub Actions automatically builds and signs the Release APK with the dedicated Plus key. Future release updates must use this same key.
+- Application ID: `com.m3u.smartphone.enhanced`
+- Version: `1.15.3-plus3`
+- Version code: `148`
+- Minimum Android: 8.0 (API 26)
+- Target Android: 16 (API 36)
+- ABI: ARM64
 
-The package ID is `com.m3u.smartphone.enhanced`, version is `1.15.1-plus1`, and versionCode is `146`. The original app ID remains unchanged, so the two apps can be installed side by side.
+The distinct package ID allows the Plus app to be installed beside the original M3UAndroid app.
 
-## Optional dedicated release-key secrets
+## Build modes
 
-Create these under **Settings → Secrets and variables → Actions → New repository secret**:
+- **ReleasePreview:** if upload-key secrets are not present, GitHub Actions builds a Release-optimized ARM64 APK using the local debug signing fallback. It is for device testing only. The workflow intentionally does **not** upload a debug-signed AAB.
+- **Release:** when all four secrets below are configured, GitHub Actions builds the optimized APK and a signed Android App Bundle (AAB). The AAB is verified before it is included in the artifact and is the Play Console upload candidate.
 
-- `M3U_RELEASE_KEYSTORE_BASE64` — Base64 content of `M3UAndroid-Plus-Release.jks`.
-- `M3U_RELEASE_STORE_PASSWORD` — the keystore password in the private key bundle.
-- `M3U_RELEASE_KEY_ALIAS` — `m3uplusrelease`.
-- `M3U_RELEASE_KEY_PASSWORD` — the key password in the private key bundle.
+## Configure the upload key
 
-The private key bundle is delivered separately. Do not upload the `.jks` file or its Base64 value to this Public repository. Do not put passwords in commits, workflow YAML, Issues or chat. Keep a secure backup of the original `.jks` file; losing it prevents future signed updates to the release APK.
+In GitHub, open **Settings → Secrets and variables → Actions** and add:
 
-## Build verification
+- `M3U_RELEASE_KEYSTORE_BASE64` — Base64-encoded contents of the private `.jks` upload keystore.
+- `M3U_RELEASE_STORE_PASSWORD` — keystore password.
+- `M3U_RELEASE_KEY_ALIAS` — `m3uplusrelease` for the dedicated Plus key.
+- `M3U_RELEASE_KEY_PASSWORD` — key password.
 
-The workflow applies only the Plus changes authored for this task, runs Python patch tests, builds only ARM64, verifies the application ID and APK signature, and uploads the APK plus SHA-256 checksum as a GitHub Actions artifact for 30 days.
+Do not commit the keystore, Base64 data, or passwords to this Public repository. Keep a separate secure backup of the original keystore. Losing the upload key can complicate or prevent future updates.
+
+The key must match the upload certificate registered for this package in Play Console. If this Plus package was already created in Play Console with a different upload certificate, use Google's upload-key reset process rather than uploading an AAB signed with an unrelated key.
+
+## Play Console notes
+
+The workflow checks the independent package ID, API 36 target, ARM64 ABI and APK signature. A Play upload also depends on the upload certificate associated with the app in Play Console, the listing/policy declarations, and the specific Play Console validation message. A successful CI build alone does not mean Google has approved the app.
+
+## Windows companion
+
+The separate Win-x64 companion is published by `.github/workflows/build-windows.yml`. It uses WinForms and LibVLCSharp; it is not a binary-compatible Windows port of Android-only features such as Room, WorkManager, Android plugins or Media3.
