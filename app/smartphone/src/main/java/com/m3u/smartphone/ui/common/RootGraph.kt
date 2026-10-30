@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavGraphBuilder
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
 import androidx.navigation.compose.composable
 import com.m3u.data.database.model.Playlist
 import com.m3u.smartphone.ui.business.favourite.FavoriteRoute
@@ -97,12 +99,19 @@ fun NavGraphBuilder.rootGraph(
         )
     }
     composable(
-        route = Destination.Advanced.name,
+        route = "${Destination.Advanced.name}?tab={tab}",
+        arguments = listOf(
+            navArgument("tab") {
+                type = NavType.StringType
+                defaultValue = "SEARCH"
+            }
+        ),
         enterTransition = { fadeIn() },
         exitTransition = { fadeOut() }
-    ) {
+    ) { backStackEntry ->
         AdvancedToolsRoute(
             navigateToChannel = navigateToChannel,
+            initialTab = backStackEntry.arguments?.getString("tab") ?: "SEARCH",
             modifier = Modifier
                 .fillMaxSize()
                 .then(
