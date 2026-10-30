@@ -60,6 +60,6 @@ object BulkPlaylistBuilder {
 
     fun safeDisplayUrl(raw: String): String = runCatching {
         val url = URL(raw.substringBefore('|'))
-        "${url.protocol}://${url.host}${if (url.port > 0) ":\${url.port}" else ""}${url.path.take(48)}"
+        "${url.protocol}://${url.host}${if (url.port > 0) ":${url.port}" else ""}${url.path.take(48)}"
     }.getOrDefault("URL hidden")
 }
