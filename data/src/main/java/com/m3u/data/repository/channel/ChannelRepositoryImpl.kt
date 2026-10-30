@@ -68,11 +68,11 @@ internal class ChannelRepositoryImpl @Inject constructor(
     override suspend fun getPageByPlaylistUrl(
         playlistUrl: String,
         limit: Int,
-        offset: Int
+        afterId: Int
     ): List<Channel> = channelDao.getPageByPlaylistUrl(
         playlistUrl = playlistUrl,
         limit = limit.coerceIn(1, 200),
-        offset = offset.coerceAtLeast(0)
+        afterId = afterId.coerceAtLeast(0)
     )
 
     override suspend fun getCountByPlaylistUrl(playlistUrl: String): Int =
