@@ -268,6 +268,20 @@ interface ChannelDao {
 
     @Query(
         """
+        SELECT * FROM streams
+        WHERE playlist_url = :playlistUrl
+        ORDER BY id ASC
+        LIMIT :limit OFFSET :offset
+        """
+    )
+    suspend fun getPageByPlaylistUrl(
+        playlistUrl: String,
+        limit: Int,
+        offset: Int
+    ): List<Channel>
+
+    @Query(
+        """
         SELECT stream.url AS url,
             COALESCE(base.category, stream.`group`) AS `group`,
             COALESCE(base.title, stream.title) AS title,
