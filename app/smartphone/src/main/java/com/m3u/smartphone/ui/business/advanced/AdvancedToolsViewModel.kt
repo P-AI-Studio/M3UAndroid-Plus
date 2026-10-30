@@ -191,10 +191,10 @@ class AdvancedToolsViewModel @Inject constructor(
         }
     }
 
-    fun startBatchDiagnostics(playlistUrl: String, concurrency: Int = 3) {
+    fun startBatchDiagnostics(playlistUrl: String, concurrency: Int = 2) {
         batchJob?.cancel()
         batchJob = viewModelScope.launch {
-            val safeConcurrency = concurrency.coerceIn(1, 5)
+            val safeConcurrency = concurrency.coerceIn(1, 3)
             _batchState.value = BatchState(running = true, message = "Counting every channel in this playlist…")
             val playlist = runCatching { playlistRepository.get(playlistUrl) }.getOrNull()
             val total = runCatching {
@@ -226,10 +226,25 @@ class AdvancedToolsViewModel @Inject constructor(
                         page.map { channel ->
                             async(Dispatchers.IO) {
                                 semaphore.withPermit {
-                                    val result = StreamDiagnostics.probe(
+                                    val firstAttempt = StreamDiagnostics.probe(
                                         rawUrl = channel.url,
                                         userAgent = playlist?.userAgent
                                     )
+                                    val result = if (
+                                        firstAttempt.outcome == StreamProbeOutcome.INCONCLUSIVE ||
+                                        firstAttempt.statusCode == null ||
+                                        firstAttempt.statusCode in 500..599
+                                    ) {
+                                        // A single low-rate retry separates transient provider/network failures
+                                        // from a consistently unavailable stream without flooding the server.
+                                        delay(500)
+                                        StreamDiagnostics.probe(
+                                            rawUrl = channel.url,
+                                            userAgent = playlist?.userAgent
+                                        )
+                                    } else {
+                                        firstAttempt
+                                    }
                                     _batchState.update { state ->
                                         state.copy(
                                             completed = state.completed + 1,
