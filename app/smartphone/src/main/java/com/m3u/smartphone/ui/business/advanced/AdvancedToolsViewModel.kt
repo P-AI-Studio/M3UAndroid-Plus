@@ -192,11 +192,11 @@ class AdvancedToolsViewModel @Inject constructor(
             )
             val semaphore = Semaphore(safeConcurrency)
             val pageSize = 100
-            var offset = 0
+            var lastChannelId = 0
             try {
-                while (offset < total) {
+                while (_batchState.value.completed < total) {
                     val page = withContext(Dispatchers.IO) {
-                        channelRepository.getPageByPlaylistUrl(playlistUrl, pageSize, offset)
+                        channelRepository.getPageByPlaylistUrl(playlistUrl, pageSize, lastChannelId)
                     }
                     if (page.isEmpty()) break
                     coroutineScope {
@@ -226,7 +226,7 @@ class AdvancedToolsViewModel @Inject constructor(
                             }
                         }.awaitAll()
                     }
-                    offset += page.size
+                    lastChannelId = page.last().id
                 }
                 _batchState.update { state ->
                     state.copy(
