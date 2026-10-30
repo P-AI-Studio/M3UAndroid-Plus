@@ -95,17 +95,12 @@ jobs:
             echo "build_kind=Release" >> "$GITHUB_OUTPUT"
             echo "A dedicated Plus release key is configured."
           else
-            echo "build_kind=Preview" >> "$GITHUB_OUTPUT"
-            echo "Release signing secrets are not yet configured; creating a debug-signed preview APK."
+            echo "build_kind=ReleasePreview" >> "$GITHUB_OUTPUT"
+            echo "Release signing secrets are not yet configured; building the optimized Release variant with a temporary debug signature for the private re-signing step."
           fi
 
-      - name: Build ARM64 release APK
-        if: steps.signing.outputs.build_kind == 'Release'
-        run: ./gradlew --no-daemon --stacktrace --console=plain -Pm3uArm64=true :app:smartphone:assembleRelease
-
-      - name: Build ARM64 preview APK
-        if: steps.signing.outputs.build_kind == 'Preview'
-        run: ./gradlew --no-daemon --stacktrace --console=plain -Pm3uArm64=true :app:smartphone:assembleDebug
+      - name: Build optimized ARM64 Release variant
+        run: ./gradlew --no-daemon --stacktrace --console=plain -Pm3uArm64=true :app:smartphone:assembleStableChannelRichCodecRelease
 
       - name: Verify independent package, ARM64 ABI and APK signature
         env:
