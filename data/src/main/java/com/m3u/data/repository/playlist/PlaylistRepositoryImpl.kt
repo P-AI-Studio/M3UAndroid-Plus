@@ -1005,6 +1005,12 @@ internal class PlaylistRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun reorderPinnedCategories(url: String, categories: List<String>) {
+        PlaylistDataMaintenanceCoordinator.withExclusive {
+            playlistDao.updatePinnedCategories(url) { categories.distinct() }
+        }
+    }
+
     override suspend fun hideOrUnhideCategory(url: String, category: String) {
         PlaylistDataMaintenanceCoordinator.withExclusive {
             playlistDao.hideOrUnhideCategory(url, category)
@@ -1050,7 +1056,13 @@ internal class PlaylistRepositoryImpl @Inject constructor(
         channelDao
             .getCategoriesByPlaylistUrl(url, query)
             .filterNot { it in hiddenCategories }
-            .sortedByDescending { it in pinnedCategories }
+            .sortedWith(
+                compareBy<String> { if (it in pinnedCategories) 0 else 1 }
+                    .thenBy { category ->
+                        val index = pinnedCategories.indexOf(category)
+                        if (index < 0) Int.MAX_VALUE else index
+                    }
+            )
     }
 
     override fun observeCategoriesByPlaylistUrlIgnoreHidden(
@@ -1065,7 +1077,13 @@ internal class PlaylistRepositoryImpl @Inject constructor(
             .map { categories ->
                 categories
                     .filterNot { it in hiddenCategories }
-                    .sortedByDescending { it in pinnedCategories }
+                    .sortedWith(
+                compareBy<String> { if (it in pinnedCategories) 0 else 1 }
+                    .thenBy { category ->
+                        val index = pinnedCategories.indexOf(category)
+                        if (index < 0) Int.MAX_VALUE else index
+                    }
+            )
             }
     }
         .flowOn(Dispatchers.Default)
