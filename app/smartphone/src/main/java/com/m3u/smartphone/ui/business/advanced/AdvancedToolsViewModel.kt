@@ -87,6 +87,7 @@ class AdvancedToolsViewModel @Inject constructor(
     private val _batchState = MutableStateFlow(BatchState())
     val batchState: StateFlow<BatchState> = _batchState.asStateFlow()
     private var batchJob: Job? = null
+    private var batchGeneration: Long = 0L
 
     private val _sourceDiagnostics = MutableStateFlow<Map<String, StreamDiagnosticResult>>(emptyMap())
     val sourceDiagnostics: StateFlow<Map<String, StreamDiagnosticResult>> = _sourceDiagnostics.asStateFlow()
@@ -195,6 +196,7 @@ class AdvancedToolsViewModel @Inject constructor(
     }
 
     fun startBatchDiagnostics(playlistUrl: String, concurrency: Int = 3) {
+        val generation = ++batchGeneration
         batchJob?.cancel()
         batchJob = viewModelScope.launch {
             val safeConcurrency = concurrency.coerceIn(1, 5)
@@ -238,6 +240,7 @@ class AdvancedToolsViewModel @Inject constructor(
                         channelRepository.getPageByPlaylistUrl(playlistUrl, pageSize, lastChannelId)
                     }
                     if (page.isEmpty()) break
+                    if (generation != batchGeneration) return@launch
 
                     val pageResults = coroutineScope {
                         page.map { channel ->
@@ -272,6 +275,7 @@ class AdvancedToolsViewModel @Inject constructor(
                     }
 
                     // Publish once per page to avoid repeatedly copying a growing result list.
+                    if (generation != batchGeneration) return@launch
                     _batchState.update { state ->
                         state.copy(
                             completed = state.completed + pageResults.size,
@@ -286,6 +290,7 @@ class AdvancedToolsViewModel @Inject constructor(
                     lastChannelId = page.last().id
                 }
 
+                if (generation != batchGeneration) return@launch
                 _batchState.update { state ->
                     state.copy(
                         running = false,
@@ -297,27 +302,33 @@ class AdvancedToolsViewModel @Inject constructor(
                     )
                 }
             } catch (cancelled: CancellationException) {
-                _batchState.update {
-                    it.copy(
-                        running = false,
-                        message = "Test stopped after ${it.completed} of $total channels."
-                    )
+                if (generation == batchGeneration) {
+                    _batchState.update {
+                        it.copy(
+                            running = false,
+                            message = "Test stopped after ${it.completed} of $total channels."
+                        )
+                    }
                 }
                 throw cancelled
             } catch (exception: Exception) {
-                _batchState.update {
-                    it.copy(
-                        running = false,
-                        message = "Test interrupted after ${it.completed} of $total channels: ${exception.javaClass.simpleName}"
-                    )
+                if (generation == batchGeneration) {
+                    _batchState.update {
+                        it.copy(
+                            running = false,
+                            message = "Test interrupted after ${it.completed} of $total channels: ${exception.javaClass.simpleName}"
+                        )
+                    }
                 }
             }
         }
     }
 
     fun cancelBatchDiagnostics() {
+        batchGeneration++
         batchJob?.cancel()
         batchJob = null
+        _batchState.update { it.copy(running = false, message = "Connection test stopped.") }
     }
 
     fun categoriesForPlaylist(playlistUrl: String): Flow<List<String>> =

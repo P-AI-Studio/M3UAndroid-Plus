@@ -567,8 +567,10 @@ internal sealed class MainForm : Form
                 var segmentBuffer = new byte[4096];
                 var segmentBytes = await segmentStream.ReadAsync(segmentBuffer.AsMemory(0, segmentBuffer.Length), cancellation);
                 var segmentStatus = (int)segmentResponse.StatusCode;
-                if (segmentStatus is >= 200 and < 300 && segmentBytes > 0)
-                    return new ProbeResult(ProbeOutcome.Online, "HLS manifest and first media segment answered.");
+                var segmentType = segmentResponse.Content.Headers.ContentType?.MediaType ?? "";
+                if (segmentStatus is >= 200 and < 300 && segmentBytes > 0 &&
+                    LooksLikeMediaPayload(segmentType, segmentBuffer, segmentBytes))
+                    return new ProbeResult(ProbeOutcome.Online, "HLS manifest and first media segment returned media-like bytes.");
                 if (segmentStatus is 401 or 403 or 429)
                     return new ProbeResult(ProbeOutcome.Restricted, "First HLS segment returned HTTP " + segmentStatus + ".");
                 if (segmentStatus is 404 or 410)

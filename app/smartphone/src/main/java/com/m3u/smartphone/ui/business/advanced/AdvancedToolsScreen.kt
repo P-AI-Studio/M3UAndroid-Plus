@@ -625,7 +625,12 @@ private fun DiagnosticsPane(
                         Text(item.category, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(
                             "${item.result.outcome.name} · HTTP ${item.result.statusCode ?: "—"} · ${item.result.elapsedMs} ms · ${item.result.error ?: if (item.result.validatedSegment) "HLS segment verified" else "Media endpoint answered"}",
-                            color = if (success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                            color = when (item.result.outcome) {
+                                StreamProbeOutcome.ONLINE -> MaterialTheme.colorScheme.primary
+                                StreamProbeOutcome.OFFLINE -> MaterialTheme.colorScheme.error
+                                StreamProbeOutcome.RESTRICTED -> MaterialTheme.colorScheme.tertiary
+                                StreamProbeOutcome.INCONCLUSIVE -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                             style = MaterialTheme.typography.bodySmall
                         )
                         Text("Type: ${item.result.contentType ?: "unknown"} · Byte ranges: ${if (item.result.rangeSupported) "yes" else "not confirmed"}", style = MaterialTheme.typography.bodySmall)
@@ -762,8 +767,11 @@ private fun ServicesPane(viewModel: AdvancedToolsViewModel) {
                                 onClick = { viewModel.testPlaylistSource(playlist.url) },
                                 enabled = playlist.url !in sourceRunning
                             ) { Text(if (playlist.url in sourceRunning) "Testing link…" else "Test link") }
-                            Button(onClick = { viewModel.startBatchDiagnostics(playlist.url, concurrency = 3) }) {
-                                Text(if (batch.running && batch.playlistUrl == playlist.url) "Testing channels…" else "Test all channels")
+                            Button(
+                                onClick = { viewModel.startBatchDiagnostics(playlist.url, concurrency = 3) },
+                                enabled = !batch.running
+                            ) {
+                                Text(if (batch.running) "Another test is running…" else "Test all channels")
                             }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
