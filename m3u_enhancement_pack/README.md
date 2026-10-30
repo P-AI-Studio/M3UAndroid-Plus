@@ -17,7 +17,7 @@ This is an additive Plus enhancement patch for the official M3UAndroid 1.15.1 so
 1. Global channel search backed by the existing channel repository.
 2. EPG browser keyed by EPG source and TVG/relation ID.
 3. Services dashboard with playlist counts, refresh and remove actions.
-4. Parental PIN foundation using salted PBKDF2-HMAC-SHA256 and failed-attempt backoff. Its current scope is category filtering in Advanced global search only; it is not a complete player-wide lock.
+4. Parental PIN using salted PBKDF2-HMAC-SHA256 and failed-attempt backoff. It filters protected categories in global search and gates entry to the app's primary Player screen. It is not a device-wide parental-control feature.
 5. Bulk M3U import: paste up to 100 unique HTTP(S) stream URLs, deduplicate, skip invalid lines and auto-number accepted entries from 1.
 6. Low-impact stream diagnostics: check up to 20 channels from one playlist, concurrency 1–3 (default 2), 2.5-second timeouts, a Range request and at most one response byte. It does not start media decoders. HTTP reachability is not proof of a decoded picture; use the normal player to verify playback.
 

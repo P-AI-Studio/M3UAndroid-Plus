@@ -718,7 +718,7 @@ private fun ParentalPane() {
         }
         message?.let { Text(it, color = MaterialTheme.colorScheme.secondary) }
         Text(
-            "This version protects category visibility in Advanced global search only. It does not yet prevent playback from every home-screen, shortcut, Android TV remote or direct-intent entry point. Do not rely on it as a complete household lock until a shared player authorization gate is added.",
+            "The PIN protects selected categories in global search and gates playback through the app's Player screen. It is not a device-wide restriction and does not block other IPTV apps or Android system settings.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.error
         )

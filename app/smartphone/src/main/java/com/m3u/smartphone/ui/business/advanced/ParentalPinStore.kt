@@ -10,10 +10,10 @@ import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 
 /**
- * Stores a salted PBKDF2 hash, never the clear-text PIN. The protected-category
- * list is used by the Advanced global-search view. Player-wide enforcement must
- * additionally be wired into every playback entry point before this is treated
- * as a complete household/parental lock.
+ * Stores a salted PBKDF2 hash, never the clear-text PIN. It protects selected
+ * categories in Advanced global search and is checked by PlayerActivity before
+ * the app's primary player starts. This is app-level protection, not a device-wide
+ * parental-control feature; external players and other apps are outside its scope.
  */
 class ParentalPinStore(context: Context) {
     private val preferences = context.applicationContext
