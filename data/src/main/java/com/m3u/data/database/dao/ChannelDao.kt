@@ -270,14 +270,15 @@ interface ChannelDao {
         """
         SELECT * FROM streams
         WHERE playlist_url = :playlistUrl
+          AND id > :afterId
         ORDER BY id ASC
-        LIMIT :limit OFFSET :offset
+        LIMIT :limit
         """
     )
     suspend fun getPageByPlaylistUrl(
         playlistUrl: String,
         limit: Int,
-        offset: Int
+        afterId: Int
     ): List<Channel>
 
     @Query(
