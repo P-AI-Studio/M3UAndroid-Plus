@@ -471,6 +471,11 @@ internal sealed class MainForm : Form
             }, async (channel, cancellation) =>
             {
                 var result = await ProbeChannelAsync(channel, cancellation);
+                if (result.Outcome == ProbeOutcome.Inconclusive)
+                {
+                    await Task.Delay(500, cancellation);
+                    result = await ProbeChannelAsync(channel, cancellation);
+                }
                 channel.Outcome = result.Outcome;
                 channel.Status = result.Description;
                 switch (result.Outcome)
@@ -517,8 +522,10 @@ internal sealed class MainForm : Form
             var status = (int)response.StatusCode;
             if (status is 401 or 403 or 407 or 429)
                 return new ProbeResult(ProbeOutcome.Restricted, "HTTP " + status + ": authentication or provider restriction.");
-            if (status is 404 or 410 || status >= 500)
-                return new ProbeResult(ProbeOutcome.Offline, "HTTP " + status + ".");
+            if (status is 404 or 410)
+                return new ProbeResult(ProbeOutcome.Offline, "HTTP " + status + ": endpoint not found.");
+            if (status >= 500)
+                return new ProbeResult(ProbeOutcome.Inconclusive, "Provider returned HTTP " + status + "; retry or verify in the player.");
 
             await using var stream = await response.Content.ReadAsStreamAsync(cancellation);
             var bytes = new byte[8192];
@@ -532,9 +539,13 @@ internal sealed class MainForm : Form
             var preview = Encoding.UTF8.GetString(bytes, 0, count).TrimStart();
             if (type.Contains("html", StringComparison.OrdinalIgnoreCase) ||
                 type.Contains("json", StringComparison.OrdinalIgnoreCase) ||
+                type.Contains("xml", StringComparison.OrdinalIgnoreCase) ||
                 preview.StartsWith("<!doctype html", StringComparison.OrdinalIgnoreCase) ||
+                preview.StartsWith("<html", StringComparison.OrdinalIgnoreCase) ||
                 preview.StartsWith("{", StringComparison.Ordinal) ||
-                preview.StartsWith("[", StringComparison.Ordinal))
+                preview.StartsWith("[", StringComparison.Ordinal) ||
+                preview.StartsWith("error", StringComparison.OrdinalIgnoreCase) ||
+                preview.StartsWith("unauthorized", StringComparison.OrdinalIgnoreCase))
                 return new ProbeResult(ProbeOutcome.Inconclusive, "Server returned a web or structured error page.");
 
             if (preview.StartsWith("#EXTM3U", StringComparison.OrdinalIgnoreCase))
@@ -560,17 +571,52 @@ internal sealed class MainForm : Form
                     return new ProbeResult(ProbeOutcome.Online, "HLS manifest and first media segment answered.");
                 if (segmentStatus is 401 or 403 or 429)
                     return new ProbeResult(ProbeOutcome.Restricted, "First HLS segment returned HTTP " + segmentStatus + ".");
-                if (segmentStatus is 404 or 410 || segmentStatus >= 500)
+                if (segmentStatus is 404 or 410)
                     return new ProbeResult(ProbeOutcome.Offline, "First HLS segment returned HTTP " + segmentStatus + ".");
+                if (segmentStatus >= 500)
+                    return new ProbeResult(ProbeOutcome.Inconclusive, "First HLS segment returned transient HTTP " + segmentStatus + ".");
                 return new ProbeResult(ProbeOutcome.Inconclusive, "First HLS segment was not confirmed.");
             }
 
+            if (!LooksLikeMediaPayload(type, bytes, count))
+                return new ProbeResult(ProbeOutcome.Inconclusive, "Bytes were returned, but they do not look like a recognized media stream.");
             return new ProbeResult(ProbeOutcome.Online, "HTTP " + status + " · " + type);
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { throw; }
-        catch (OperationCanceledException) { return new ProbeResult(ProbeOutcome.Offline, "Connection timed out."); }
-        catch (HttpRequestException ex) { return new ProbeResult(ProbeOutcome.Offline, ex.Message); }
+        catch (OperationCanceledException) { return new ProbeResult(ProbeOutcome.Inconclusive, "Connection timed out; result is inconclusive."); }
+        catch (HttpRequestException ex) { return new ProbeResult(ProbeOutcome.Inconclusive, "Network check inconclusive: " + ex.GetType().Name); }
         catch (Exception ex) { return new ProbeResult(ProbeOutcome.Inconclusive, ex.GetType().Name); }
+    }
+
+    private static bool LooksLikeMediaPayload(string contentType, byte[] bytes, int count)
+    {
+        var type = contentType ?? "";
+        if (type.StartsWith("video/", StringComparison.OrdinalIgnoreCase) ||
+            type.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) ||
+            type.Contains("mp2t", StringComparison.OrdinalIgnoreCase) ||
+            type.Contains("mp4", StringComparison.OrdinalIgnoreCase) ||
+            type.Contains("mpeg", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (count >= 8)
+        {
+            if (bytes[0] == 0x47 || (count > 188 && bytes[188] == 0x47) ||
+                (count > 376 && bytes[376] == 0x47))
+                return true;
+            var box = Encoding.ASCII.GetString(bytes, 4, 4);
+            if (box is "ftyp" or "moof" or "styp") return true;
+            var signature = Encoding.ASCII.GetString(bytes, 0, 4);
+            if (signature is "ID3" or "OggS" or "FLV ") return true;
+        }
+        var sample = Math.Min(count, 2048);
+        if (sample == 0) return false;
+        var printable = 0;
+        for (var i = 0; i < sample; i++)
+        {
+            var value = bytes[i];
+            if (value is 9 or 10 or 13 || value is >= 32 and <= 126 || value >= 160)
+                printable++;
+        }
+        return (double)printable / sample < 0.85;
     }
 
     private async Task<string> DownloadTextAsync(string url, CancellationToken cancellation)

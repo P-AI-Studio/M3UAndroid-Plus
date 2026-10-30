@@ -27,7 +27,7 @@ env:
 jobs:
   build-arm64:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout source and submodules
         uses: actions/checkout@v4
@@ -73,7 +73,7 @@ jobs:
           fi
           test -f "$ANDROID_HOME/platforms/android-37/android.jar"
 
-      - name: Configure dedicated Plus release signing when repository secrets exist
+      - name: Configure dedicated Plus upload-key signing when repository secrets exist
         id: signing
         env:
           M3U_RELEASE_KEYSTORE_BASE64: ${{ secrets.M3U_RELEASE_KEYSTORE_BASE64 }}
@@ -87,23 +87,34 @@ jobs:
                 -n "$M3U_RELEASE_STORE_PASSWORD" && \
                 -n "$M3U_RELEASE_KEY_ALIAS" && \
                 -n "$M3U_RELEASE_KEY_PASSWORD" ]]; then
-            echo "$M3U_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/m3u-plus-release.jks"
-            test -s "$RUNNER_TEMP/m3u-plus-release.jks"
-            echo "M3U_RELEASE_KEYSTORE_PATH=$RUNNER_TEMP/m3u-plus-release.jks" >> "$GITHUB_ENV"
+            echo "$M3U_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/m3u-plus-upload.jks"
+            test -s "$RUNNER_TEMP/m3u-plus-upload.jks"
+            echo "M3U_RELEASE_KEYSTORE_PATH=$RUNNER_TEMP/m3u-plus-upload.jks" >> "$GITHUB_ENV"
             echo "M3U_RELEASE_STORE_PASSWORD=$M3U_RELEASE_STORE_PASSWORD" >> "$GITHUB_ENV"
             echo "M3U_RELEASE_KEY_ALIAS=$M3U_RELEASE_KEY_ALIAS" >> "$GITHUB_ENV"
             echo "M3U_RELEASE_KEY_PASSWORD=$M3U_RELEASE_KEY_PASSWORD" >> "$GITHUB_ENV"
             echo "build_kind=Release" >> "$GITHUB_OUTPUT"
-            echo "A dedicated Plus release key is configured."
+            echo "Upload-key secrets are configured; a Play-uploadable AAB will be built."
           else
             echo "build_kind=ReleasePreview" >> "$GITHUB_OUTPUT"
-            echo "Release signing secrets are not yet configured; building the optimized Release variant with a temporary debug signature for the private re-signing step."
+            echo "Upload-key secrets are not configured; building a Release APK only. No debug-signed AAB will be published."
           fi
 
-      - name: Build optimized ARM64 Release APK and AAB
-        run: ./gradlew --no-daemon --stacktrace --console=plain -Pm3uArm64=true :app:smartphone:assembleRelease :app:smartphone:bundleRelease
+      - name: Build optimized ARM64 Release APK (and signed AAB when upload key is configured)
+        env:
+          BUILD_KIND: ${{ steps.signing.outputs.build_kind }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$BUILD_KIND" == "Release" ]]; then
+            ./gradlew --no-daemon --stacktrace --console=plain -Pm3uArm64=true \
+              :app:smartphone:assembleRelease :app:smartphone:bundleRelease
+          else
+            ./gradlew --no-daemon --stacktrace --console=plain -Pm3uArm64=true \
+              :app:smartphone:assembleRelease
+          fi
 
-      - name: Verify independent package, ARM64 ABI and APK signature
+      - name: Verify package, target SDK, ARM64 ABI and APK signature
         env:
           BUILD_KIND: ${{ steps.signing.outputs.build_kind }}
         shell: bash
@@ -128,24 +139,26 @@ jobs:
           "$AAPT" dump badging "$APK" > "$RUNNER_TEMP/badging.txt"
           grep -F "package: name='com.m3u.smartphone.enhanced'" "$RUNNER_TEMP/badging.txt"
           grep -F "targetSdkVersion:'36'" "$RUNNER_TEMP/badging.txt"
-          unzip -l "$APK" | grep 'lib/arm64-v8a/' | head -n 10
           "$APKSIGNER" verify --verbose --print-certs "$APK"
+          unzip -l "$APK" | grep 'lib/arm64-v8a/' | head -n 10
+
           mkdir -p dist
           cp "$APK" "dist/M3UAndroid-1.15.2-plus2-arm64-${BUILD_KIND,,}.apk"
-          AAB="app/smartphone/build/outputs/bundle/release/app-smartphone-release.aab"
-          test -s "$AAB" || { echo 'Release AAB was not produced'; find app/smartphone/build/outputs -type f -name '*.aab' || true; exit 1; }
-          cp "$AAB" "dist/M3UAndroid-1.15.2-plus2-arm64-${BUILD_KIND,,}.aab"
-          sha256sum "dist/M3UAndroid-1.15.2-plus2-arm64-${BUILD_KIND,,}.apk" "dist/M3UAndroid-1.15.2-plus2-arm64-${BUILD_KIND,,}.aab" > dist/SHA256SUMS.txt
+          if [[ "$BUILD_KIND" == "Release" ]]; then
+            AAB="app/smartphone/build/outputs/bundle/release/app-smartphone-release.aab"
+            test -s "$AAB" || { echo 'Release AAB was not produced'; exit 1; }
+            jarsigner -verify "$AAB"
+            cp "$AAB" "dist/M3UAndroid-1.15.2-plus2-arm64-release.aab"
+            sha256sum "dist/M3UAndroid-1.15.2-plus2-arm64-release.apk" "dist/M3UAndroid-1.15.2-plus2-arm64-release.aab" > dist/SHA256SUMS.txt
+          else
+            sha256sum "dist/M3UAndroid-1.15.2-plus2-arm64-releasepreview.apk" > dist/SHA256SUMS.txt
+          fi
           printf '%s\n' "$BUILD_KIND" > dist/BUILD_KIND.txt
 
-      - name: Upload verified ARM64 APK
+      - name: Upload verified Android package
         uses: actions/upload-artifact@v4
         with:
-          name: M3UAndroid-Plus-1.15.2-${{ steps.signing.outputs.build_kind }}-ARM64-Apk-And-Aab
-          path: |
-            dist/M3UAndroid-1.15.2-plus2-arm64-*.apk
-            dist/M3UAndroid-1.15.2-plus2-arm64-*.aab
-            dist/SHA256SUMS.txt
-            dist/BUILD_KIND.txt
+          name: M3UAndroid-Plus-1.15.2-${{ steps.signing.outputs.build_kind }}-ARM64
+          path: dist/
           if-no-files-found: error
           retention-days: 30

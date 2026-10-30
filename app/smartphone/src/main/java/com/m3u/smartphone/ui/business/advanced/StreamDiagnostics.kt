@@ -15,8 +15,8 @@ enum class StreamProbeOutcome {
 }
 
 /**
- * Bounded, redirect-aware stream probe. An ONLINE result means the HTTP media endpoint
- * (and for HLS, one referenced segment) returned readable bytes. It is not a decoder test.
+ * Bounded HTTP media probe. It does not start a decoder. ONLINE means the response looks like
+ * media data and, for HLS, a referenced media segment was also reached.
  */
 data class StreamDiagnosticResult(
     val endpoint: String,
@@ -36,143 +36,107 @@ data class StreamDiagnosticResult(
 object StreamDiagnostics {
     fun probe(rawUrl: String, userAgent: String? = null): StreamDiagnosticResult {
         val started = System.nanoTime()
-        val parsedInput = parseInput(rawUrl, userAgent)
-            ?: return failed("(invalid link)", started, "The link is invalid.", StreamProbeOutcome.INCONCLUSIVE)
+        val parsed = parseInput(rawUrl, userAgent)
+            ?: return failed("(invalid link)", started, "The link is invalid.")
 
-        val url = parsedInput.url
-        val protocol = url.protocol.lowercase()
-        if (protocol != "http" && protocol != "https") {
-            return failed(
-                safeEndpoint(url),
-                started,
-                "This protocol needs a player-level test; HTTP checks do not apply.",
-                StreamProbeOutcome.INCONCLUSIVE
-            )
+        val url = parsed.url
+        if (!url.protocol.equals("http", true) && !url.protocol.equals("https", true)) {
+            return failed(safeEndpoint(url), started, "Only HTTP and HTTPS links can be checked.")
         }
 
         return try {
-            val initial = request(url, parsedInput.userAgent, parsedInput.referer, MAX_PROBE_BYTES)
+            val initial = request(url, parsed.userAgent, parsed.referer, MAX_PROBE_BYTES)
             val endpoint = safeEndpoint(url)
             val finalEndpoint = safeEndpoint(initial.finalUrl)
-            val elapsed = elapsedMs(started)
-            val contentType = initial.contentType
-            val isHls = initial.bodyText().trimStart('\uFEFF', ' ', '\r', '\n')
-                .startsWith("#EXTM3U", ignoreCase = true) ||
-                contentType?.contains("mpegurl", ignoreCase = true) == true ||
-                contentType?.contains("vnd.apple.mpegurl", ignoreCase = true) == true
+            val status = initial.statusCode
+            val type = initial.contentType
 
-            if (initial.statusCode in 401..403 || initial.statusCode == 407 || initial.statusCode == 429) {
+            classifyStatus(status)?.let { outcome ->
                 return StreamDiagnosticResult(
-                    endpoint, initial.statusCode, elapsed, contentType, initial.contentLength,
+                    endpoint, status, elapsedMs(started), type, initial.contentLength,
                     initial.rangeSupported, initial.body.isNotEmpty(), initial.redirected,
-                    "The server restricted this request (authentication, rate limit or provider policy).",
-                    StreamProbeOutcome.RESTRICTED, false, finalEndpoint
+                    statusMessage(status, outcome), outcome, false, finalEndpoint
                 )
             }
-            if (initial.statusCode !in 200..299) {
-                val outcome = when (initial.statusCode) {
-                    404, 410 -> StreamProbeOutcome.OFFLINE
-                    in 500..599 -> StreamProbeOutcome.OFFLINE
-                    else -> StreamProbeOutcome.INCONCLUSIVE
-                }
+
+            if (status !in 200..299) {
                 return StreamDiagnosticResult(
-                    endpoint, initial.statusCode, elapsed, contentType, initial.contentLength,
+                    endpoint, status, elapsedMs(started), type, initial.contentLength,
                     initial.rangeSupported, initial.body.isNotEmpty(), initial.redirected,
-                    "Server returned HTTP ${initial.statusCode}.", outcome, false, finalEndpoint
+                    "The server response was not conclusive (HTTP $status).",
+                    StreamProbeOutcome.INCONCLUSIVE, false, finalEndpoint
                 )
             }
             if (initial.body.isEmpty()) {
                 return StreamDiagnosticResult(
-                    endpoint, initial.statusCode, elapsed, contentType, initial.contentLength,
+                    endpoint, status, elapsedMs(started), type, initial.contentLength,
                     initial.rangeSupported, false, initial.redirected,
-                    "The server answered but returned no readable bytes.",
+                    "The server responded but returned no readable bytes.",
                     StreamProbeOutcome.INCONCLUSIVE, false, finalEndpoint
                 )
             }
+
+            val preview = initial.bodyText().trimStart('\uFEFF', ' ', '\r', '\n')
+            val isHls = preview.startsWith("#EXTM3U", ignoreCase = true) ||
+                type?.contains("mpegurl", ignoreCase = true) == true ||
+                type?.contains("vnd.apple.mpegurl", ignoreCase = true) == true
 
             if (isHls) {
                 val segment = probeHlsMedia(
                     manifestUrl = initial.finalUrl,
                     manifest = initial.bodyText(),
-                    userAgent = parsedInput.userAgent,
-                    referer = parsedInput.referer,
+                    userAgent = parsed.userAgent,
+                    referer = parsed.referer,
                     depth = 0
                 )
-                val segmentReadable = segment.outcome == StreamProbeOutcome.ONLINE
+                val valid = segment.outcome == StreamProbeOutcome.ONLINE
                 return StreamDiagnosticResult(
                     endpoint = endpoint,
-                    statusCode = initial.statusCode,
+                    statusCode = status,
                     elapsedMs = elapsedMs(started),
-                    contentType = contentType,
+                    contentType = type,
                     contentLength = initial.contentLength,
                     rangeSupported = initial.rangeSupported || segment.rangeSupported,
-                    firstByteReceived = segmentReadable,
+                    firstByteReceived = valid,
                     redirect = initial.redirected || segment.redirected,
                     error = segment.error,
                     outcome = segment.outcome,
-                    validatedSegment = segmentReadable,
+                    validatedSegment = valid,
                     finalEndpoint = finalEndpoint
                 )
             }
 
-            val looksLikeHtml = contentType?.contains("text/html", ignoreCase = true) == true ||
-                initial.bodyText().trimStart().startsWith("<!doctype html", ignoreCase = true) ||
-                initial.bodyText().trimStart().startsWith("<html", ignoreCase = true)
-            val bodyPreview = initial.bodyText().trimStart()
-            val looksLikeStructuredError = contentType?.let {
-                it.contains("json", ignoreCase = true) ||
-                    it.contains("xml", ignoreCase = true)
-            } == true || bodyPreview.startsWith("{") || bodyPreview.startsWith("[") ||
-                bodyPreview.startsWith("<?xml", ignoreCase = true)
-            if (looksLikeStructuredError) {
-                return StreamDiagnosticResult(
-                    endpoint, initial.statusCode, elapsedMs(started), contentType, initial.contentLength,
-                    initial.rangeSupported, true, initial.redirected,
-                    "The server returned structured text rather than a confirmed media stream.",
-                    StreamProbeOutcome.INCONCLUSIVE, false, finalEndpoint
-                )
-            }
-
-            if (looksLikeHtml) {
-                return StreamDiagnosticResult(
-                    endpoint, initial.statusCode, elapsedMs(started), contentType, initial.contentLength,
-                    initial.rangeSupported, true, initial.redirected,
-                    "The server returned a web page rather than media bytes (possibly a sign-in or block page).",
-                    StreamProbeOutcome.INCONCLUSIVE, false, finalEndpoint
-                )
-            }
-
+            val media = looksLikeMedia(type, initial.body)
+            val errorPage = looksLikeTextError(type, initial.body)
+            val outcome = if (media && !errorPage) StreamProbeOutcome.ONLINE else StreamProbeOutcome.INCONCLUSIVE
             StreamDiagnosticResult(
                 endpoint = endpoint,
-                statusCode = initial.statusCode,
+                statusCode = status,
                 elapsedMs = elapsedMs(started),
-                contentType = contentType,
+                contentType = type,
                 contentLength = initial.contentLength,
                 rangeSupported = initial.rangeSupported,
                 firstByteReceived = true,
                 redirect = initial.redirected,
-                error = null,
-                outcome = StreamProbeOutcome.ONLINE,
+                error = if (outcome == StreamProbeOutcome.ONLINE) null else
+                    "The server returned bytes, but they could not be confirmed as media. Verify this channel in the player.",
+                outcome = outcome,
                 validatedSegment = false,
                 finalEndpoint = finalEndpoint
             )
         } catch (exception: Exception) {
             val message = when (exception) {
-                is java.net.SocketTimeoutException -> "Connection timed out."
-                is java.net.UnknownHostException -> "The server name could not be resolved."
-                is javax.net.ssl.SSLException -> "Secure connection (TLS) failed."
-                is java.net.ConnectException -> "The server refused or could not accept the connection."
-                else -> "Network check failed (${exception.javaClass.simpleName})."
+                is java.net.SocketTimeoutException -> "Connection timed out; the result is inconclusive."
+                is java.net.UnknownHostException -> "The server name could not be resolved; check the address or DNS."
+                is javax.net.ssl.SSLException -> "Secure connection (TLS) failed; check the server certificate and device time."
+                is java.net.ConnectException -> "The server refused the connection or is temporarily unavailable."
+                else -> "Network check was inconclusive (${exception.javaClass.simpleName})."
             }
-            failed(safeEndpoint(url), started, message, StreamProbeOutcome.OFFLINE)
+            failed(safeEndpoint(url), started, message)
         }
     }
 
-    private data class ParsedInput(
-        val url: URL,
-        val userAgent: String?,
-        val referer: String?
-    )
+    private data class ParsedInput(val url: URL, val userAgent: String?, val referer: String?)
 
     private data class HttpSample(
         val finalUrl: URL,
@@ -186,20 +150,26 @@ object StreamDiagnostics {
         fun bodyText(): String = String(body, StandardCharsets.UTF_8)
     }
 
+    private data class HlsProbe(
+        val outcome: StreamProbeOutcome,
+        val rangeSupported: Boolean,
+        val redirected: Boolean,
+        val error: String?
+    )
+
     private fun parseInput(raw: String, suppliedUserAgent: String?): ParsedInput? = runCatching {
         val parts = raw.trim().split('|', limit = 2)
         val url = URL(parts.first().trim())
         val options = parts.getOrNull(1).orEmpty()
         fun option(name: String): String? {
-            val match = Regex("(?i)(?:^|[&;])${Regex.escape(name)}=([^&;]+)")
-                .find(options) ?: return null
+            val match = Regex("(?i)(?:^|[&;])${Regex.escape(name)}=([^&;]+)").find(options)
+                ?: return null
             return URLDecoder.decode(match.groupValues[1], StandardCharsets.UTF_8.name())
         }
         ParsedInput(
-            url = url,
-            userAgent = suppliedUserAgent?.takeIf(String::isNotBlank)
-                ?: option("User-Agent") ?: option("ua"),
-            referer = option("Referer") ?: option("referrer")
+            url,
+            suppliedUserAgent?.takeIf(String::isNotBlank) ?: option("User-Agent") ?: option("ua"),
+            option("Referer") ?: option("referrer")
         )
     }.getOrNull()
 
@@ -207,7 +177,8 @@ object StreamDiagnostics {
         url: URL,
         userAgent: String?,
         referer: String?,
-        maximumBytes: Int
+        maximumBytes: Int,
+        allowRangeFallback: Boolean = true
     ): HttpSample {
         var connection: HttpURLConnection? = null
         try {
@@ -219,139 +190,164 @@ object StreamDiagnostics {
                 readTimeout = READ_TIMEOUT_MS
                 instanceFollowRedirects = true
                 useCaches = false
-                setRequestProperty("Range", "bytes=0-${maximumBytes - 1}")
                 setRequestProperty("Accept", "*/*")
                 setRequestProperty("Accept-Encoding", "identity")
                 setRequestProperty("Connection", "close")
                 userAgent?.takeIf(String::isNotBlank)?.let { setRequestProperty("User-Agent", it) }
                 referer?.takeIf(String::isNotBlank)?.let { setRequestProperty("Referer", it) }
+                setRequestProperty("Range", "bytes=0-${maximumBytes - 1}")
             }
             val status = connection.responseCode
+            if (allowRangeFallback && status in RANGE_FALLBACK_STATUSES) {
+                connection.disconnect()
+                connection = null
+                return request(url, userAgent, referer, maximumBytes, allowRangeFallback = false)
+            }
             val input = if (status in 200..299) connection.inputStream else connection.errorStream
             val body = input?.use { readLimited(it, maximumBytes) } ?: ByteArray(0)
             val range = status == HttpURLConnection.HTTP_PARTIAL ||
                 connection.getHeaderField("Accept-Ranges")?.contains("bytes", ignoreCase = true) == true
             val finalUrl = connection.url ?: url
             return HttpSample(
-                finalUrl = finalUrl,
-                statusCode = status,
-                contentType = connection.contentType,
-                contentLength = connection.getHeaderFieldLong("Content-Length", -1L).takeIf { it >= 0L },
-                rangeSupported = range,
-                redirected = finalUrl.toExternalForm() != url.toExternalForm(),
-                body = body
+                finalUrl,
+                status,
+                connection.contentType,
+                connection.getHeaderFieldLong("Content-Length", -1L).takeIf { it >= 0L },
+                range,
+                finalUrl.toExternalForm() != url.toExternalForm(),
+                body
             )
         } finally {
             connection?.disconnect()
         }
     }
 
-    private data class HlsSegmentProbe(
-        val outcome: StreamProbeOutcome,
-        val statusCode: Int?,
-        val rangeSupported: Boolean,
-        val redirected: Boolean,
-        val error: String?
-    )
-
-    /**
-     * Follows at most two nested HLS playlists (master -> variant -> media segment).
-     * This prevents a reachable master/variant manifest from being reported as a playable segment.
-     */
     private fun probeHlsMedia(
         manifestUrl: URL,
         manifest: String,
         userAgent: String?,
         referer: String?,
         depth: Int
-    ): HlsSegmentProbe {
+    ): HlsProbe {
         val reference = findHlsMediaReference(manifest)
-            ?: return HlsSegmentProbe(
-                StreamProbeOutcome.INCONCLUSIVE, null, false, false,
-                "HLS manifest was reachable, but no media URI was found."
+            ?: return HlsProbe(
+                StreamProbeOutcome.INCONCLUSIVE, false, false,
+                "HLS manifest loaded, but no variant or media segment was found."
             )
-        val sample = request(
-            URL(manifestUrl, reference),
-            userAgent,
-            referer,
-            MAX_SEGMENT_BYTES
-        )
-        val status = sample.statusCode
-        if (status in 401..403 || status == 407 || status == 429) {
-            return HlsSegmentProbe(
-                StreamProbeOutcome.RESTRICTED, status, sample.rangeSupported, sample.redirected,
-                "HLS media request was restricted (HTTP $status)."
-            )
+        val sample = request(URL(manifestUrl, reference), userAgent, referer, MAX_SEGMENT_BYTES)
+        classifyStatus(sample.statusCode)?.let { outcome ->
+            return HlsProbe(outcome, sample.rangeSupported, sample.redirected, statusMessage(sample.statusCode, outcome))
         }
-        if (status == 404 || status == 410 || status in 500..599) {
-            return HlsSegmentProbe(
-                StreamProbeOutcome.OFFLINE, status, sample.rangeSupported, sample.redirected,
-                "HLS media request failed (HTTP $status)."
-            )
-        }
-        if (status !in 200..299 || sample.body.isEmpty()) {
-            return HlsSegmentProbe(
-                StreamProbeOutcome.INCONCLUSIVE, status, sample.rangeSupported, sample.redirected,
-                "HLS media response was not confirmed (HTTP $status)."
+        if (sample.statusCode !in 200..299 || sample.body.isEmpty()) {
+            return HlsProbe(
+                StreamProbeOutcome.INCONCLUSIVE, sample.rangeSupported, sample.redirected,
+                "HLS media response was not conclusive (HTTP ${sample.statusCode})."
             )
         }
 
         val preview = sample.bodyText().trimStart('\uFEFF', ' ', '\r', '\n')
-        val nestedManifest = preview.startsWith("#EXTM3U", ignoreCase = true) ||
+        val nested = preview.startsWith("#EXTM3U", ignoreCase = true) ||
             sample.contentType?.contains("mpegurl", ignoreCase = true) == true ||
             sample.contentType?.contains("vnd.apple.mpegurl", ignoreCase = true) == true
-        if (nestedManifest) {
+        if (nested) {
             if (depth >= MAX_HLS_NESTED_PLAYLISTS) {
-                return HlsSegmentProbe(
-                    StreamProbeOutcome.INCONCLUSIVE, status, sample.rangeSupported, sample.redirected,
-                    "Too many nested HLS playlists; the media segment was not confirmed."
+                return HlsProbe(
+                    StreamProbeOutcome.INCONCLUSIVE, sample.rangeSupported, sample.redirected,
+                    "Nested HLS playlist depth exceeded; no media segment was confirmed."
                 )
             }
-            val nested = probeHlsMedia(
-                manifestUrl = sample.finalUrl,
-                manifest = sample.bodyText(),
-                userAgent = userAgent,
-                referer = referer,
-                depth = depth + 1
-            )
-            return nested.copy(
-                rangeSupported = sample.rangeSupported || nested.rangeSupported,
-                redirected = sample.redirected || nested.redirected
+            val nestedResult = probeHlsMedia(sample.finalUrl, sample.bodyText(), userAgent, referer, depth + 1)
+            return nestedResult.copy(
+                rangeSupported = sample.rangeSupported || nestedResult.rangeSupported,
+                redirected = sample.redirected || nestedResult.redirected
             )
         }
 
-        val htmlOrStructured = sample.contentType?.let {
-            it.contains("text/html", ignoreCase = true) ||
-                it.contains("json", ignoreCase = true) ||
-                it.contains("xml", ignoreCase = true)
-        } == true || preview.startsWith("{") || preview.startsWith("[") ||
-            preview.startsWith("<html", ignoreCase = true)
-        if (htmlOrStructured) {
-            return HlsSegmentProbe(
-                StreamProbeOutcome.INCONCLUSIVE, status, sample.rangeSupported, sample.redirected,
-                "The HLS media URL returned a web or structured error page."
+        return if (looksLikeMedia(sample.contentType, sample.body) &&
+            !looksLikeTextError(sample.contentType, sample.body)
+        ) {
+            HlsProbe(StreamProbeOutcome.ONLINE, sample.rangeSupported, sample.redirected, null)
+        } else {
+            HlsProbe(
+                StreamProbeOutcome.INCONCLUSIVE, sample.rangeSupported, sample.redirected,
+                "HLS manifest loaded, but its first referenced response was not confirmed as media."
             )
         }
-        return HlsSegmentProbe(
-            StreamProbeOutcome.ONLINE, status, sample.rangeSupported, sample.redirected, null
-        )
     }
 
     private fun findHlsMediaReference(manifest: String): String? {
-        val lines = manifest.lineSequence().map(String::trim)
-            .filter(String::isNotEmpty).toList()
         var expectUri = false
-        for (line in lines) {
+        manifest.lineSequence().map(String::trim).filter(String::isNotEmpty).forEach { line ->
             if (line.startsWith("#EXT-X-STREAM-INF", ignoreCase = true) ||
-                line.startsWith("#EXTINF", ignoreCase = true)) {
+                line.startsWith("#EXTINF", ignoreCase = true) ||
+                line.startsWith("#EXT-X-PART:", ignoreCase = true)
+            ) {
                 expectUri = true
-                continue
-            }
-            if (!line.startsWith("#")) {
-                if (expectUri || line.contains('/') || line.contains('.')) return line
+            } else if (!line.startsWith("#")) {
+                if (expectUri || line.contains('.') || line.contains('/')) return line
             }
         }
         return null
+    }
+
+    private fun classifyStatus(status: Int): StreamProbeOutcome? = when (status) {
+        401, 403, 407, 429 -> StreamProbeOutcome.RESTRICTED
+        404, 410 -> StreamProbeOutcome.OFFLINE
+        else -> null
+    }
+
+    private fun statusMessage(status: Int, outcome: StreamProbeOutcome): String = when (outcome) {
+        StreamProbeOutcome.RESTRICTED -> when (status) {
+            429 -> "Provider rate-limited this request (HTTP 429)."
+            407 -> "A proxy requires authentication (HTTP 407)."
+            else -> "Provider restricted this request (HTTP $status)."
+        }
+        StreamProbeOutcome.OFFLINE -> "The server says this endpoint is unavailable (HTTP $status)."
+        else -> "The server response is inconclusive (HTTP $status)."
+    }
+
+    private fun looksLikeMedia(contentType: String?, bytes: ByteArray): Boolean {
+        val type = contentType.orEmpty().lowercase()
+        if (type.startsWith("video/") || type.startsWith("audio/") ||
+            type.contains("mp2t") || type.contains("mp4") || type.contains("mpeg") ||
+            type.contains("vnd.apple") || type.contains("mpegurl")
+        ) return true
+        if (bytes.size >= 8) {
+            if (bytes[0] == 0x47.toByte() ||
+                (bytes.size > 188 && bytes[188] == 0x47.toByte()) ||
+                (bytes.size > 376 && bytes[376] == 0x47.toByte())
+            ) return true
+            val box = String(bytes, 4, 4, StandardCharsets.US_ASCII)
+            if (box == "ftyp" || box == "moof" || box == "styp") return true
+            val signature = String(bytes, 0, 4, StandardCharsets.US_ASCII)
+            if (signature == "ID3" || signature == "OggS" || signature == "FLV ") return true
+        }
+        return bytes.isNotEmpty() && printableRatio(bytes) < BINARY_PRINTABLE_RATIO
+    }
+
+    private fun looksLikeTextError(contentType: String?, bytes: ByteArray): Boolean {
+        val type = contentType.orEmpty().lowercase()
+        if (type.contains("text/html") || type.contains("application/json") ||
+            type.contains("text/json") || type.contains("application/xml")
+        ) return true
+        val preview = String(bytes, 0, minOf(bytes.size, 512), StandardCharsets.UTF_8)
+            .trimStart('\uFEFF', ' ', '\r', '\n', '\t')
+        if (preview.startsWith("<!doctype html", true) || preview.startsWith("<html", true) ||
+            preview.startsWith("{") || preview.startsWith("[") || preview.startsWith("<?xml", true) ||
+            preview.startsWith("error", true) || preview.startsWith("unauthorized", true) ||
+            preview.startsWith("forbidden", true) || preview.startsWith("access denied", true)
+        ) return true
+        return type.startsWith("text/") && printableRatio(bytes) >= BINARY_PRINTABLE_RATIO
+    }
+
+    private fun printableRatio(bytes: ByteArray): Double {
+        if (bytes.isEmpty()) return 1.0
+        val size = minOf(bytes.size, 2048)
+        val printable = bytes.take(size).count { byte ->
+            val value = byte.toInt() and 0xff
+            value == 9 || value == 10 || value == 13 || value in 32..126 || value >= 160
+        }
+        return printable.toDouble() / size
     }
 
     private fun readLimited(input: java.io.InputStream, maximumBytes: Int): ByteArray {
@@ -370,15 +366,9 @@ object StreamDiagnostics {
         if (url.port > 0) append(':').append(url.port)
     }
 
-    private fun elapsedMs(started: Long): Long =
-        (System.nanoTime() - started) / 1_000_000L
+    private fun elapsedMs(started: Long): Long = (System.nanoTime() - started) / 1_000_000L
 
-    private fun failed(
-        endpoint: String,
-        started: Long,
-        message: String,
-        outcome: StreamProbeOutcome
-    ) = StreamDiagnosticResult(
+    private fun failed(endpoint: String, started: Long, message: String) = StreamDiagnosticResult(
         endpoint = endpoint,
         statusCode = null,
         elapsedMs = elapsedMs(started),
@@ -388,7 +378,7 @@ object StreamDiagnostics {
         firstByteReceived = false,
         redirect = false,
         error = message,
-        outcome = outcome,
+        outcome = StreamProbeOutcome.INCONCLUSIVE,
         validatedSegment = false,
         finalEndpoint = endpoint
     )
@@ -398,4 +388,6 @@ object StreamDiagnostics {
     private const val MAX_PROBE_BYTES = 8 * 1024
     private const val MAX_SEGMENT_BYTES = 4 * 1024
     private const val MAX_HLS_NESTED_PLAYLISTS = 2
+    private const val BINARY_PRINTABLE_RATIO = 0.85
+    private val RANGE_FALLBACK_STATUSES = setOf(400, 405, 416)
 }

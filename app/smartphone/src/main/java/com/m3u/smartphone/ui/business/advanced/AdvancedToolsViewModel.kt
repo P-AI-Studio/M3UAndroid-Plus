@@ -48,6 +48,7 @@ class AdvancedToolsViewModel @Inject constructor(
     private val channelRepository: ChannelRepository,
     private val playlistRepository: PlaylistRepository,
     private val programmeRepository: ProgrammeRepository,
+    private val xtreamParser: XtreamParser,
     private val workManager: WorkManager,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
@@ -71,6 +72,7 @@ class AdvancedToolsViewModel @Inject constructor(
     )
 
     data class BatchState(
+        val playlistUrl: String? = null,
         val total: Int = 0,
         val completed: Int = 0,
         val online: Int = 0,
@@ -163,8 +165,9 @@ class AdvancedToolsViewModel @Inject constructor(
             }
             var queued = 0
             var failed = 0
+            val firstGroupNumber = runCatching { playlistRepository.getAll().size }.getOrDefault(0)
             parsed.urls.forEachIndexed { index, url ->
-                val title = BulkPlaylistBuilder.groupTitle(index)
+                val title = BulkPlaylistBuilder.groupTitle(firstGroupNumber + index)
                 val result = runCatching {
                     val xtream = XtreamInput.decodeFromPlaylistUrlOrNull(url)
                     if (xtream != null) {
@@ -191,27 +194,40 @@ class AdvancedToolsViewModel @Inject constructor(
         }
     }
 
-    fun startBatchDiagnostics(playlistUrl: String, concurrency: Int = 2) {
+    fun startBatchDiagnostics(playlistUrl: String, concurrency: Int = 3) {
         batchJob?.cancel()
         batchJob = viewModelScope.launch {
-            val safeConcurrency = concurrency.coerceIn(1, 3)
-            _batchState.value = BatchState(running = true, message = "Counting every channel in this playlist…")
-            val playlist = runCatching { playlistRepository.get(playlistUrl) }.getOrNull()
+            val safeConcurrency = concurrency.coerceIn(1, 5)
+            _batchState.value = BatchState(
+                playlistUrl = playlistUrl,
+                running = true,
+                message = "Counting every channel in this playlist…"
+            )
+            val playlist = runCatching {
+                withContext(Dispatchers.IO) { playlistRepository.get(playlistUrl) }
+            }.getOrNull()
             val total = runCatching {
                 withContext(Dispatchers.IO) { channelRepository.getCountByPlaylistUrl(playlistUrl) }
             }.getOrElse {
-                _batchState.value = BatchState(message = "Could not count playlist channels: database read failed.")
+                _batchState.value = BatchState(
+                    playlistUrl = playlistUrl,
+                    message = "Could not count playlist channels: database read failed."
+                )
                 return@launch
             }
             if (total == 0) {
-                _batchState.value = BatchState(message = "This playlist has no channels to test.")
+                _batchState.value = BatchState(
+                    playlistUrl = playlistUrl,
+                    message = "This playlist has no channels to test."
+                )
                 return@launch
             }
 
             _batchState.value = BatchState(
+                playlistUrl = playlistUrl,
                 total = total,
                 running = true,
-                message = "Testing all $total channels in bounded pages with $safeConcurrency concurrent checks…"
+                message = "Testing all $total channels in small database pages with $safeConcurrency concurrent checks…"
             )
             val semaphore = Semaphore(safeConcurrency)
             val pageSize = 100
@@ -222,7 +238,8 @@ class AdvancedToolsViewModel @Inject constructor(
                         channelRepository.getPageByPlaylistUrl(playlistUrl, pageSize, lastChannelId)
                     }
                     if (page.isEmpty()) break
-                    coroutineScope {
+
+                    val pageResults = coroutineScope {
                         page.map { channel ->
                             async(Dispatchers.IO) {
                                 semaphore.withPermit {
@@ -235,8 +252,6 @@ class AdvancedToolsViewModel @Inject constructor(
                                         firstAttempt.statusCode == null ||
                                         firstAttempt.statusCode in 500..599
                                     ) {
-                                        // A single low-rate retry separates transient provider/network failures
-                                        // from a consistently unavailable stream without flooding the server.
                                         delay(500)
                                         StreamDiagnostics.probe(
                                             rawUrl = channel.url,
@@ -245,39 +260,49 @@ class AdvancedToolsViewModel @Inject constructor(
                                     } else {
                                         firstAttempt
                                     }
-                                    _batchState.update { state ->
-                                        state.copy(
-                                            completed = state.completed + 1,
-                                            online = state.online + if (result.outcome == StreamProbeOutcome.ONLINE) 1 else 0,
-                                            offline = state.offline + if (result.outcome == StreamProbeOutcome.OFFLINE) 1 else 0,
-                                            restricted = state.restricted + if (result.outcome == StreamProbeOutcome.RESTRICTED) 1 else 0,
-                                            inconclusive = state.inconclusive + if (result.outcome == StreamProbeOutcome.INCONCLUSIVE) 1 else 0,
-                                            results = state.results + BatchItem(
-                                                channelId = channel.id,
-                                                title = channel.title,
-                                                category = channel.category,
-                                                result = result
-                                            )
-                                        )
-                                    }
+                                    BatchItem(
+                                        channelId = channel.id,
+                                        title = channel.title,
+                                        category = channel.category,
+                                        result = result
+                                    )
                                 }
                             }
                         }.awaitAll()
                     }
+
+                    // Publish once per page to avoid repeatedly copying a growing result list.
+                    _batchState.update { state ->
+                        state.copy(
+                            completed = state.completed + pageResults.size,
+                            online = state.online + pageResults.count { it.result.outcome == StreamProbeOutcome.ONLINE },
+                            offline = state.offline + pageResults.count { it.result.outcome == StreamProbeOutcome.OFFLINE },
+                            restricted = state.restricted + pageResults.count { it.result.outcome == StreamProbeOutcome.RESTRICTED },
+                            inconclusive = state.inconclusive + pageResults.count { it.result.outcome == StreamProbeOutcome.INCONCLUSIVE },
+                            results = state.results + pageResults,
+                            message = "Checked ${state.completed + pageResults.size} of $total channels…"
+                        )
+                    }
                     lastChannelId = page.last().id
                 }
+
                 _batchState.update { state ->
                     state.copy(
                         running = false,
                         message = if (state.completed == total) {
-                            "Finished every channel: ${state.completed}/$total checked. ONLINE means the media endpoint (and one HLS segment when applicable) answered; it is not a decoder guarantee."
+                            "Finished every channel: ${state.completed}/$total checked. ONLINE means the media endpoint (and one HLS media segment when applicable) returned media-like bytes; it is not a decoder guarantee."
                         } else {
                             "The playlist changed during the test. ${state.completed} of $total channels were checked; run it again for the latest list."
                         }
                     )
                 }
             } catch (cancelled: CancellationException) {
-                _batchState.update { it.copy(running = false, message = "Test stopped after ${it.completed} of $total channels.") }
+                _batchState.update {
+                    it.copy(
+                        running = false,
+                        message = "Test stopped after ${it.completed} of $total channels."
+                    )
+                }
                 throw cancelled
             } catch (exception: Exception) {
                 _batchState.update {
@@ -288,6 +313,11 @@ class AdvancedToolsViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    fun cancelBatchDiagnostics() {
+        batchJob?.cancel()
+        batchJob = null
     }
 
     fun categoriesForPlaylist(playlistUrl: String): Flow<List<String>> =
@@ -336,7 +366,11 @@ class AdvancedToolsViewModel @Inject constructor(
                                 firstByteReceived = true,
                                 redirect = false,
                                 error = sessionInfo,
-                                outcome = if (active) StreamProbeOutcome.ONLINE else StreamProbeOutcome.RESTRICTED
+                                outcome = when (accountStatus.lowercase()) {
+                                "active", "enabled" -> StreamProbeOutcome.ONLINE
+                                "disabled", "expired", "banned", "blocked" -> StreamProbeOutcome.RESTRICTED
+                                else -> StreamProbeOutcome.INCONCLUSIVE
+                            }
                             )
                         } catch (cancelled: CancellationException) {
                             throw cancelled
@@ -351,7 +385,7 @@ class AdvancedToolsViewModel @Inject constructor(
                                 firstByteReceived = false,
                                 redirect = false,
                                 error = "Xtream account check failed: ${exception.javaClass.simpleName}",
-                                outcome = StreamProbeOutcome.OFFLINE
+                                outcome = StreamProbeOutcome.INCONCLUSIVE
                             )
                         }
                     }

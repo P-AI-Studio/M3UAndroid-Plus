@@ -565,7 +565,7 @@ private fun DiagnosticsPane(
     val scope = rememberCoroutineScope()
     var selectedUrl by remember(playlists) { mutableStateOf(playlists.keys.firstOrNull()?.url.orEmpty()) }
     var selectorExpanded by remember { mutableStateOf(false) }
-    var concurrency by remember { mutableStateOf(2) }
+    var concurrency by remember { mutableStateOf(3) }
     val selectedPlaylist = playlists.entries.firstOrNull { it.key.url == selectedUrl }
 
     Column(Modifier.fillMaxSize().padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -726,6 +726,7 @@ private fun ServicesPane(viewModel: AdvancedToolsViewModel) {
     val message by viewModel.operationMessage.collectAsStateWithLifecycle()
     val sourceResults by viewModel.sourceDiagnostics.collectAsStateWithLifecycle()
     val sourceRunning by viewModel.sourceTestsRunning.collectAsStateWithLifecycle()
+    val batch by viewModel.batchState.collectAsStateWithLifecycle()
     var pendingRemoval by remember { mutableStateOf<com.m3u.data.database.model.Playlist?>(null) }
     if (pendingRemoval != null) {
         val selected = pendingRemoval!!
@@ -760,9 +761,26 @@ private fun ServicesPane(viewModel: AdvancedToolsViewModel) {
                             Button(
                                 onClick = { viewModel.testPlaylistSource(playlist.url) },
                                 enabled = playlist.url !in sourceRunning
-                            ) { Text(if (playlist.url in sourceRunning) "Testing…" else "Test connection") }
+                            ) { Text(if (playlist.url in sourceRunning) "Testing link…" else "Test link") }
+                            Button(onClick = { viewModel.startBatchDiagnostics(playlist.url, concurrency = 3) }) {
+                                Text(if (batch.running && batch.playlistUrl == playlist.url) "Testing channels…" else "Test all channels")
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { viewModel.refreshPlaylist(playlist.url) }) { Text("Refresh") }
                             Button(onClick = { pendingRemoval = playlist }) { Text("Remove") }
+                        }
+                        if (batch.playlistUrl == playlist.url && batch.total > 0) {
+                            val percent = (batch.completed * 100 / batch.total).coerceIn(0, 100)
+                            Text("Channel test: ${batch.completed}/${batch.total} · $percent% · Online ${batch.online} · Offline ${batch.offline} · Restricted ${batch.restricted} · Review ${batch.inconclusive}", style = MaterialTheme.typography.bodySmall)
+                            androidx.compose.material3.LinearProgressIndicator(
+                                progress = { batch.completed.toFloat() / batch.total.coerceAtLeast(1) },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            batch.message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            if (batch.running) {
+                                Button(onClick = viewModel::cancelBatchDiagnostics) { Text("Stop test") }
+                            }
                         }
                         sourceResults[playlist.url]?.let { result ->
                             Text(
